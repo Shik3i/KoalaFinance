@@ -3,7 +3,7 @@ module github.com/Shik3i/KoalaFinance/backend
 go 1.25.0
 
 require (
-	github.com/go-chi/chi/v5 v5.0.12
+	github.com/go-chi/chi/v5 v5.3.0
 	golang.org/x/crypto v0.53.0
 	modernc.org/sqlite v1.53.0
 )
