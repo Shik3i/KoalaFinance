@@ -36,6 +36,7 @@
   import CategoriesView from './lib/components/finance/CategoriesView.svelte';
   import RecurringItemsView from './lib/components/finance/RecurringItemsView.svelte';
   import SubscriptionsView from './lib/components/finance/SubscriptionsView.svelte';
+  import TransactionsView from './lib/components/finance/TransactionsView.svelte';
 
   // --- State Variables ---
   let isLoginView = true;
@@ -917,7 +918,7 @@
           </div>
         {/if}
 
-        {#if ['accounts', 'categories', 'recurring', 'subscriptions'].includes(activeTab) && !activeVaultKey}
+        {#if ['accounts', 'categories', 'recurring', 'subscriptions', 'transactions'].includes(activeTab) && !activeVaultKey}
           <div class="locked-finance-view">
             <div class="locked-card">
               <span class="lock-icon">🔒</span>
@@ -1051,6 +1052,8 @@
           <RecurringItemsView {csrfToken} />
         {:else if activeTab === 'subscriptions'}
           <SubscriptionsView />
+        {:else if activeTab === 'transactions'}
+          <TransactionsView {csrfToken} />
         {:else if activeTab === 'admin' && currentUser.role === 'admin'}
           <AdminPanel csrfToken={csrfToken} />
         {:else if activeTab === 'debug'}

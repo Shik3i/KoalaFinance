@@ -8,7 +8,7 @@ KoalaFinance is a self-hosted, privacy-first, client-side end-to-end encrypted p
 
 ---
 
-## 1. Implemented Features (Phase 6B)
+## 1. Implemented Features (Phase 6C)
 
 Currently, the core security, database, cryptographic foundations, and early finance models are fully implemented:
 
@@ -33,19 +33,20 @@ Currently, the core security, database, cryptographic foundations, and early fin
 * **Accounts View**: Manage E2E encrypted account definitions with support for signed opening and current balances.
 * **Categories View**: Grouped active category creation with client-side deduplication checking by normalized name + kind.
 * **Recurring Items Ledger**: Pausable recurring income and expenses with necessity tags and optional account associations.
-* **Subscriptions & Fixed Costs View**: Client-side derived list from recurring expenses calculating monthly/yearly cost equivalents and cancel candidates.
+* **Subscriptions & Fixed Costs View**: Client-side derived list from recurring expenses calculating monthly/yearly cost equivalents and cancel candidate metrics.
+* **Transaction UI & Ledger View**: Create, edit, and archive Income, Expense, and Transfer transactions securely.
+* **Split Transaction Editor**: A dynamic split categories interface ensuring split sums match the total transaction amount.
+* **Transfer Editor**: Enforces positive transfer amounts and distinct source/destination accounts with zero category splits.
+* **Derived Balance Preview**: Real-time in-memory calculation of account balances for "calculated" mode based on recorded transactions, without database mutation.
 * **In-Memory Store & Partial Failure Tolerance**: Svelte stores wrap records in a `LoadedFinanceRecord<T>` interface keeping the backing database record IDs. Decryption failures on individual records do not crash the app, but display a warning banner with reloading options.
 * **Archive-over-Delete Semantics**: Financial records are marked `archived: true` during deletion to prevent irreversible loss, maintaining complete client-side security.
 
 ---
 
-## 2. What Is NOT Implemented Yet (Phase 6C+)
+## 2. What Is NOT Implemented Yet (Phase 6D+)
 
 The following features are out of scope for the current foundation and will be implemented in future releases:
 
-- **Transaction UI & Ledger View** (individual transaction records editing)
-- **Split Transaction Editor**
-- **Transfer Editor**
 - **Envelope Budgeting UI**
 - **Financial Reports & Charts**
 - **Backup / Export / Import utilities**

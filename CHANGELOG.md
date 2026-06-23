@@ -2,6 +2,18 @@
 
 All notable changes to KoalaFinance will be documented in this file.
 
+## [0.3.0] - 2026-06-23
+
+### Added
+- **Encrypted Transactions UI & Splits Editor (Phase 6C)**:
+  - Encrypted transactions UI with forms for Expense, Income, and Transfer types.
+  - Interactive Split transactions editor for income/expenses validating that split sum equals total, category is selected, and amounts are positive.
+  - Transfer transaction validator enforcing empty splits, positive transfer amounts, and distinct source/destination accounts.
+  - Dynamic transaction ledger view with active filters by Month (derived), Account, Category, Type, and Show Archived toggle.
+  - Real-time in-memory derived balance calculations for Accounts with "calculated" balance mode.
+  - Metadata preservation on transaction CRUD, using archive-over-delete semantics (`archived: true` updates).
+  - Automated tests for validator transfer rules, store CRUD, month/account/category filtering, and derived balance calculations.
+
 ## [0.2.0] - 2026-06-23
 
 ### Added

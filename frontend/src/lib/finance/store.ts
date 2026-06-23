@@ -1,11 +1,48 @@
-import { writable } from "svelte/store";
-import type { AccountRecord, CategoryRecord, RecurringItemRecord, LoadedFinanceRecord } from "./types";
+import { writable, derived } from "svelte/store";
+import type { AccountRecord, CategoryRecord, RecurringItemRecord, TransactionRecord, LoadedFinanceRecord } from "./types";
 import { fromEncryptedRecord, toEncryptedRecordInput } from "./records";
 
 // In-memory decrypted stores using LoadedFinanceRecord wrapper
 export const accounts = writable<LoadedFinanceRecord<AccountRecord>[]>([]);
 export const categories = writable<LoadedFinanceRecord<CategoryRecord>[]>([]);
 export const recurringItems = writable<LoadedFinanceRecord<RecurringItemRecord>[]>([]);
+export const transactions = writable<LoadedFinanceRecord<TransactionRecord>[]>([]);
+
+// Derived store to calculate account balances dynamically for 'calculated' balanceMode
+export const derivedAccounts = derived(
+  [accounts, transactions],
+  ([$accounts, $transactions]) => {
+    return $accounts.map(acc => {
+      if (acc.payload.balanceMode !== "calculated") {
+        return acc;
+      }
+      let balance = acc.payload.openingBalanceMinor ?? 0;
+      const id = acc.payload.id;
+      for (const tx of $transactions) {
+        if (tx.payload.archived) continue;
+        if (tx.payload.type === "income" && tx.payload.accountId === id) {
+          balance += tx.payload.totalAmountMinor;
+        } else if (tx.payload.type === "expense" && tx.payload.accountId === id) {
+          balance -= tx.payload.totalAmountMinor;
+        } else if (tx.payload.type === "transfer") {
+          if (tx.payload.accountId === id) {
+            balance -= tx.payload.totalAmountMinor;
+          }
+          if (tx.payload.destinationAccountId === id) {
+            balance += tx.payload.totalAmountMinor;
+          }
+        }
+      }
+      return {
+        ...acc,
+        payload: {
+          ...acc.payload,
+          currentBalanceMinor: balance
+        }
+      };
+    });
+  }
+);
 
 // Loading and diagnostic stores
 export const loading = writable<boolean>(false);
@@ -39,6 +76,7 @@ export function clearVault() {
   accounts.set([]);
   categories.set([]);
   recurringItems.set([]);
+  transactions.set([]);
   error.set(null);
   warning.set(null);
   totalRecordsLoaded.set(0);
@@ -82,6 +120,7 @@ export async function refreshRecords() {
     const accList: LoadedFinanceRecord<AccountRecord>[] = [];
     const catList: LoadedFinanceRecord<CategoryRecord>[] = [];
     const recList: LoadedFinanceRecord<RecurringItemRecord>[] = [];
+    const txList: LoadedFinanceRecord<TransactionRecord>[] = [];
     let decryptWarnings = 0;
 
     for (const rec of encryptedRecords) {
@@ -139,14 +178,33 @@ export async function refreshRecords() {
           });
           decryptWarnings++;
         }
+      } else if (rec.record_type === "transaction") {
+        try {
+          const decrypted = await fromEncryptedRecord(rec, activeVaultKey);
+          txList.push({
+            recordId: rec.id,
+            recordType: "transaction",
+            revision: rec.revision,
+            updatedAt: rec.updated_at,
+            payload: decrypted
+          });
+        } catch (decErr) {
+          console.warn("Skipped invalid decrypted finance record", {
+            recordType: rec.record_type,
+            recordId: rec.id,
+            errorCodes: ["decryption_or_validation_failed"]
+          });
+          decryptWarnings++;
+        }
       }
     }
 
     accounts.set(accList);
     categories.set(catList);
     recurringItems.set(recList);
+    transactions.set(txList);
 
-    successfullyDecryptedCount.set(accList.length + catList.length + recList.length);
+    successfullyDecryptedCount.set(accList.length + catList.length + recList.length + txList.length);
     skippedRecordsCount.set(decryptWarnings);
 
     if (decryptWarnings > 0) {
@@ -164,7 +222,7 @@ export async function refreshRecords() {
  * Uses recordId (backing encrypted record ID) to execute a PUT update, otherwise POSTs new.
  */
 export async function saveRecord(
-  recordType: "account" | "category" | "recurring_item",
+  recordType: "account" | "category" | "recurring_item" | "transaction",
   payload: any,
   recordId: string | undefined,
   csrfToken: string
@@ -216,7 +274,7 @@ export async function saveRecord(
  * Archives a finance record by setting archived: true and executing saveRecord.
  */
 export async function archiveRecord(
-  recordType: "account" | "category" | "recurring_item",
+  recordType: "account" | "category" | "recurring_item" | "transaction",
   payload: any,
   recordId: string,
   csrfToken: string

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { accounts, loading, error, warning, refreshRecords, archiveRecord } from "../../finance/store";
+  import { derivedAccounts, loading, error, warning, refreshRecords, archiveRecord } from "../../finance/store";
   import { formatMinorAsEuro } from "../../finance/money";
   import type { AccountRecord, LoadedFinanceRecord } from "../../finance/types";
   import AccountForm from "./AccountForm.svelte";
@@ -10,8 +10,10 @@
   let editingAccount: LoadedFinanceRecord<AccountRecord> | undefined = undefined;
   let showArchived = false;
 
-  $: activeAccounts = $accounts.filter((a) => !a.payload.archived);
-  $: visibleAccounts = showArchived ? $accounts : activeAccounts;
+  $: activeAccounts = $derivedAccounts.filter((a) => !a.payload.archived);
+  $: archivedAccounts = $derivedAccounts.filter((a) => a.payload.archived);
+  $: visibleAccounts = showArchived ? $derivedAccounts : activeAccounts;
+  $: toggleBtnLabel = showArchived ? "Hide Archived" : `Show Archived (${archivedAccounts.length})`;
 
   function handleEdit(acc: LoadedFinanceRecord<AccountRecord>) {
     editingAccount = acc;
@@ -51,7 +53,7 @@
     </div>
     <div class="header-actions">
       <button class="toggle-archived-btn" on:click={() => (showArchived = !showArchived)}>
-        {showArchived ? "Hide Archived" : "Show Archived ({archivedAccounts.length})"}
+        {toggleBtnLabel}
       </button>
       <button class="add-btn" on:click={handleAdd}>
         + Add Account
@@ -119,7 +121,10 @@
                     {formatMinorAsEuro(acc.payload.currentBalanceMinor ?? 0)} €
                   </span>
                 {:else if acc.payload.balanceMode === "calculated"}
-                  <span class="calculated-placeholder">Calculated (Future)</span>
+                  <span class="amount-value {(acc.payload.currentBalanceMinor ?? 0) < 0 ? 'negative' : ''}" title="Calculated in-memory from transactions">
+                    {formatMinorAsEuro(acc.payload.currentBalanceMinor ?? 0)} €
+                    <span class="calc-badge" style="font-size: 0.75rem; color: #8b949e; margin-left: 0.2rem;">(calc)</span>
+                  </span>
                 {:else}
                   <span class="none-placeholder">None</span>
                 {/if}

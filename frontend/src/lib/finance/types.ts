@@ -80,6 +80,7 @@ export interface TransactionRecord {
   splits: TransactionSplit[];
   recurringItemId?: string;
   notes?: string;
+  archived: boolean;
   createdAt: string; // ISO Timestamp
   updatedAt: string; // ISO Timestamp
 }

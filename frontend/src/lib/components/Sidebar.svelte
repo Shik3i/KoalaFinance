@@ -41,6 +41,14 @@
     </button>
 
     <button
+      class="menu-item {activeTab === 'transactions' ? 'active' : ''}"
+      on:click={() => onChangeTab('transactions')}
+    >
+      <span class="icon">📝</span>
+      <span class="label">Transactions</span>
+    </button>
+
+    <button
       class="menu-item {activeTab === 'categories' ? 'active' : ''}"
       on:click={() => onChangeTab('categories')}
     >

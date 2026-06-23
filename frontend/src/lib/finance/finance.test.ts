@@ -11,7 +11,10 @@ import {
   setVault,
   clearVault,
   saveRecord,
-  archiveRecord
+  archiveRecord,
+  accounts as accountsStore,
+  transactions as transactionsStore,
+  derivedAccounts as derivedAccountsStore
 } from "./store";
 import { isValidPlainDate, isValidBudgetMonth, isValidTimestamp } from "./dates";
 import {
@@ -37,7 +40,8 @@ import type {
   CategoryRecord,
   RecurringItemRecord,
   TransactionRecord,
-  BudgetEnvelopeRecord
+  BudgetEnvelopeRecord,
+  LoadedFinanceRecord
 } from "./types";
 
 describe("Finance Domain Model & Helpers", () => {
@@ -215,6 +219,7 @@ describe("Finance Domain Model & Helpers", () => {
           { id: "sp_1", categoryId: "cat_1", amountMinor: 700 },
           { id: "sp_2", categoryId: "cat_2", amountMinor: 300 }
         ],
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -233,6 +238,7 @@ describe("Finance Domain Model & Helpers", () => {
           { id: "sp_1", categoryId: "cat_1", amountMinor: 500 },
           { id: "sp_2", categoryId: "cat_2", amountMinor: 400 } // Total is 900
         ],
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -254,6 +260,7 @@ describe("Finance Domain Model & Helpers", () => {
         splits: [
           { id: "sp_1", categoryId: "cat_1", amountMinor: -500 }
         ],
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -264,8 +271,9 @@ describe("Finance Domain Model & Helpers", () => {
       }
     });
 
-    it("should reject transfer transactions lacking source or destination when one is set", () => {
-      const tx: TransactionRecord = {
+    it("should reject transfer transactions lacking source or destination, having splits, or matching accounts", () => {
+      // 1. Lacks destinationAccountId
+      const tx1: TransactionRecord = {
         schemaVersion: 1,
         id: "tx_1",
         date: "2026-06-23",
@@ -273,14 +281,57 @@ describe("Finance Domain Model & Helpers", () => {
         accountId: "acc_1", // Lacks destinationAccountId
         totalAmountMinor: 1000,
         currency: "EUR",
-        splits: [{ id: "sp_1", categoryId: "cat_1", amountMinor: 1000 }],
+        splits: [],
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
-      const result = validateTransaction(tx);
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.errors.some((e: any) => e.field === "destinationAccountId" && e.code === "missing_transfer_destination")).toBe(true);
+      const res1 = validateTransaction(tx1);
+      expect(res1.ok).toBe(false);
+      if (!res1.ok) {
+        expect(res1.errors.some((e: any) => e.field === "destinationAccountId" && e.code === "required")).toBe(true);
+      }
+
+      // 2. Has splits
+      const tx2: TransactionRecord = {
+        schemaVersion: 1,
+        id: "tx_2",
+        date: "2026-06-23",
+        type: "transfer",
+        accountId: "acc_1",
+        destinationAccountId: "acc_2",
+        totalAmountMinor: 1000,
+        currency: "EUR",
+        splits: [{ id: "sp_1", categoryId: "cat_1", amountMinor: 1000 }], // Splits must be empty
+        archived: false,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      const res2 = validateTransaction(tx2);
+      expect(res2.ok).toBe(false);
+      if (!res2.ok) {
+        expect(res2.errors.some((e: any) => e.field === "splits" && e.code === "invalid_type")).toBe(true);
+      }
+
+      // 3. Same accounts
+      const tx3: TransactionRecord = {
+        schemaVersion: 1,
+        id: "tx_3",
+        date: "2026-06-23",
+        type: "transfer",
+        accountId: "acc_1",
+        destinationAccountId: "acc_1", // Same source/destination
+        totalAmountMinor: 1000,
+        currency: "EUR",
+        splits: [],
+        archived: false,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      const res3 = validateTransaction(tx3);
+      expect(res3.ok).toBe(false);
+      if (!res3.ok) {
+        expect(res3.errors.some((e: any) => e.field === "destinationAccountId" && e.code === "same_accounts")).toBe(true);
       }
     });
 
@@ -505,16 +556,19 @@ describe("Finance Domain Model & Helpers", () => {
             { id: "s1", categoryId: "housing", amountMinor: 1000 },
             { id: "s2", categoryId: "groceries", amountMinor: 500 }
           ],
+          archived: false,
           createdAt: "", updatedAt: ""
         },
         {
           schemaVersion: 1, id: "t2", date: "2026-06-20", type: "expense", totalAmountMinor: 400, currency: "EUR",
           splits: [{ id: "s3", categoryId: "groceries", amountMinor: 400 }],
+          archived: false,
           createdAt: "", updatedAt: ""
         },
         {
           schemaVersion: 1, id: "t3", date: "2026-07-01", type: "expense", totalAmountMinor: 900, currency: "EUR",
           splits: [{ id: "s4", categoryId: "housing", amountMinor: 900 }],
+          archived: false,
           createdAt: "", updatedAt: ""
         }
       ];
@@ -544,6 +598,7 @@ describe("Finance Domain Model & Helpers", () => {
         {
           schemaVersion: 1, id: "t1", date: "2026-06-15", type: "expense", totalAmountMinor: 50000, currency: "EUR",
           splits: [{ id: "s1", categoryId: "housing", amountMinor: 50000 }],
+          archived: false,
           createdAt: "", updatedAt: ""
         }
       ];
@@ -906,6 +961,200 @@ describe("Finance Domain Model & Helpers", () => {
 
         expect(totalMonthlyCancelCandidates).toBe(3000);
         expect(totalYearlyCancelCandidates).toBe(36000);
+      });
+    });
+
+    describe("Transactions Store & Calculations", () => {
+      it("should calculate correct derived account balances dynamically in-memory", () => {
+        const mockAccounts = [
+          {
+            recordId: "rec_acc1",
+            recordType: "account" as const,
+            payload: {
+              schemaVersion: 1 as const,
+              id: "acc_1",
+              name: "Checking",
+              type: "checking" as const,
+              currency: "EUR" as const,
+              openingBalanceMinor: 1000,
+              balanceMode: "calculated" as const,
+              archived: false,
+              createdAt: "",
+              updatedAt: ""
+            }
+          },
+          {
+            recordId: "rec_acc2",
+            recordType: "account" as const,
+            payload: {
+              schemaVersion: 1 as const,
+              id: "acc_2",
+              name: "Savings",
+              type: "savings" as const,
+              currency: "EUR" as const,
+              openingBalanceMinor: 500,
+              balanceMode: "calculated" as const,
+              archived: false,
+              createdAt: "",
+              updatedAt: ""
+            }
+          }
+        ];
+
+        const mockTransactions = [
+          {
+            recordId: "rec_tx1",
+            recordType: "transaction" as const,
+            payload: {
+              schemaVersion: 1 as const,
+              id: "tx_1",
+              date: "2026-06-23",
+              type: "income" as const,
+              accountId: "acc_1",
+              totalAmountMinor: 500,
+              currency: "EUR" as const,
+              splits: [],
+              archived: false,
+              createdAt: "",
+              updatedAt: ""
+            }
+          },
+          {
+            recordId: "rec_tx2",
+            recordType: "transaction" as const,
+            payload: {
+              schemaVersion: 1 as const,
+              id: "tx_2",
+              date: "2026-06-23",
+              type: "expense" as const,
+              accountId: "acc_1",
+              totalAmountMinor: 200,
+              currency: "EUR" as const,
+              splits: [{ id: "sp1", categoryId: "cat_1", amountMinor: 200 }],
+              archived: false,
+              createdAt: "",
+              updatedAt: ""
+            }
+          },
+          {
+            recordId: "rec_tx3",
+            recordType: "transaction" as const,
+            payload: {
+              schemaVersion: 1 as const,
+              id: "tx_3",
+              date: "2026-06-23",
+              type: "transfer" as const,
+              accountId: "acc_1",
+              destinationAccountId: "acc_2",
+              totalAmountMinor: 300,
+              currency: "EUR" as const,
+              splits: [],
+              archived: false,
+              createdAt: "",
+              updatedAt: ""
+            }
+          },
+          {
+            recordId: "rec_tx4",
+            recordType: "transaction" as const,
+            payload: {
+              schemaVersion: 1 as const,
+              id: "tx_4",
+              date: "2026-06-23",
+              type: "expense" as const,
+              accountId: "acc_1",
+              totalAmountMinor: 1000,
+              currency: "EUR" as const,
+              splits: [{ id: "sp2", categoryId: "cat_1", amountMinor: 1000 }],
+              archived: true,
+              createdAt: "",
+              updatedAt: ""
+            }
+          }
+        ];
+
+        accountsStore.set(mockAccounts);
+        transactionsStore.set(mockTransactions);
+
+        const derivedList = get(derivedAccountsStore) as LoadedFinanceRecord<AccountRecord>[];
+        expect(derivedList.length).toBe(2);
+
+        const acc1 = derivedList.find(a => a.payload.id === "acc_1");
+        expect(acc1?.payload.currentBalanceMinor).toBe(1000);
+
+        const acc2 = derivedList.find(a => a.payload.id === "acc_2");
+        expect(acc2?.payload.currentBalanceMinor).toBe(800);
+      });
+
+      it("should filter transaction list correctly by month, account, category, type, and archived states", () => {
+        const txs = [
+          {
+            id: "tx1", date: "2026-06-01", type: "income", accountId: "acc_1",
+            totalAmountMinor: 100, currency: "EUR", splits: [{ id: "s1", categoryId: "cat_1", amountMinor: 100 }],
+            archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            id: "tx2", date: "2026-06-15", type: "expense", accountId: "acc_1",
+            totalAmountMinor: 200, currency: "EUR", splits: [{ id: "s2", categoryId: "cat_2", amountMinor: 200 }],
+            archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            id: "tx3", date: "2026-07-01", type: "transfer", accountId: "acc_1", destinationAccountId: "acc_2",
+            totalAmountMinor: 300, currency: "EUR", splits: [],
+            archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            id: "tx4", date: "2026-06-20", type: "expense", accountId: "acc_2",
+            totalAmountMinor: 400, currency: "EUR", splits: [{ id: "s3", categoryId: "cat_1", amountMinor: 400 }],
+            archived: true, createdAt: "", updatedAt: ""
+          }
+        ];
+
+        const filterTxs = (
+          list: any[],
+          month: string,
+          account: string,
+          category: string,
+          type: string,
+          showArchived: boolean
+        ) => {
+          return list.filter(tx => {
+            if (!showArchived && tx.archived) return false;
+            if (month !== "all" && tx.date.substring(0, 7) !== month) return false;
+            if (account !== "all") {
+              const matchesSource = tx.accountId === account;
+              const matchesDest = tx.type === "transfer" && tx.destinationAccountId === account;
+              if (!matchesSource && !matchesDest) return false;
+            }
+            if (category !== "all") {
+              if (tx.type === "transfer") return false;
+              const matchesCategory = tx.splits.some((s: any) => s.categoryId === category);
+              if (!matchesCategory) return false;
+            }
+            if (type !== "all" && tx.type !== type) return false;
+            return true;
+          });
+        };
+
+        const res1 = filterTxs(txs, "all", "all", "all", "all", false);
+        expect(res1.length).toBe(3);
+        expect(res1.map(t => t.id)).not.toContain("tx4");
+
+        const res2 = filterTxs(txs, "2026-06", "all", "all", "all", false);
+        expect(res2.length).toBe(2);
+        expect(res2.map(t => t.id)).toContain("tx1");
+        expect(res2.map(t => t.id)).toContain("tx2");
+
+        const res3 = filterTxs(txs, "all", "acc_2", "all", "all", false);
+        expect(res3.length).toBe(1);
+        expect(res3[0].id).toBe("tx3");
+
+        const res4 = filterTxs(txs, "all", "all", "cat_1", "all", false);
+        expect(res4.length).toBe(1);
+        expect(res4[0].id).toBe("tx1");
+
+        const res5 = filterTxs(txs, "all", "all", "all", "all", true);
+        expect(res5.length).toBe(4);
       });
     });
 

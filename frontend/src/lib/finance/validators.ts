@@ -253,20 +253,27 @@ export function validateTransaction(payload: any): ValidationResult {
     errors.push(makeError("type", "invalid_enum", "Invalid transaction type"));
   }
 
-  if (payload.accountId !== undefined && payload.accountId !== null && !isValidString(payload.accountId, 1, 100)) {
-    errors.push(makeError("accountId", "invalid_type", "accountId must be a valid string"));
-  }
-
-  if (payload.destinationAccountId !== undefined && payload.destinationAccountId !== null && !isValidString(payload.destinationAccountId, 1, 100)) {
-    errors.push(makeError("destinationAccountId", "invalid_type", "destinationAccountId must be a valid string"));
-  }
-
-  // Transfer validation: check destination if one is provided but not the other
   if (payload.type === "transfer") {
-    const hasSource = payload.accountId !== undefined && payload.accountId !== null && payload.accountId !== "";
-    const hasDest = payload.destinationAccountId !== undefined && payload.destinationAccountId !== null && payload.destinationAccountId !== "";
-    if ((hasSource || hasDest) && !(hasSource && hasDest)) {
-      errors.push(makeError("destinationAccountId", "missing_transfer_destination", "Transfers must include both source and destination accounts"));
+    const hasSource = isValidString(payload.accountId, 1, 100);
+    const hasDest = isValidString(payload.destinationAccountId, 1, 100);
+    if (!hasSource) {
+      errors.push(makeError("accountId", "required", "Source account is required for transfers"));
+    }
+    if (!hasDest) {
+      errors.push(makeError("destinationAccountId", "required", "Destination account is required for transfers"));
+    }
+    if (hasSource && hasDest && payload.accountId === payload.destinationAccountId) {
+      errors.push(makeError("destinationAccountId", "same_accounts", "Source and destination accounts must be different"));
+    }
+    if (payload.totalAmountMinor <= 0) {
+      errors.push(makeError("totalAmountMinor", "invalid_amount", "Transfer amount must be positive"));
+    }
+  } else {
+    if (payload.accountId !== undefined && payload.accountId !== null && !isValidString(payload.accountId, 1, 100)) {
+      errors.push(makeError("accountId", "invalid_type", "accountId must be a valid string"));
+    }
+    if (payload.destinationAccountId !== undefined && payload.destinationAccountId !== null && payload.destinationAccountId !== "") {
+      errors.push(makeError("destinationAccountId", "invalid_field", "Destination account must only be set for transfers"));
     }
   }
 
@@ -283,35 +290,41 @@ export function validateTransaction(payload: any): ValidationResult {
   }
 
   // Splits Validation
-  if (!Array.isArray(payload.splits) || payload.splits.length === 0) {
-    errors.push(makeError("splits", "required", "splits array must contain at least one split"));
+  if (payload.type === "transfer") {
+    if (!Array.isArray(payload.splits) || payload.splits.length !== 0) {
+      errors.push(makeError("splits", "invalid_type", "Transfers must not have splits (splits must be empty)"));
+    }
   } else {
-    let splitsSum = 0;
-    payload.splits.forEach((split: any, idx: number) => {
-      if (!split || typeof split !== "object") {
-        errors.push(makeError(`splits[${idx}]`, "invalid_type", "split must be an object"));
-        return;
-      }
-      if (!isValidString(split.id, 1, 100)) {
-        errors.push(makeError(`splits[${idx}].id`, "required", "split id is required"));
-      }
-      if (!isValidString(split.categoryId, 1, 100)) {
-        errors.push(makeError(`splits[${idx}].categoryId`, "required", "split categoryId is required"));
-      }
-      if (!isValidMinorAmount(split.amountMinor)) {
-        errors.push(makeError(`splits[${idx}].amountMinor`, "invalid_amount", "split amountMinor must be a safe non-negative integer"));
-      } else {
-        splitsSum += split.amountMinor;
-      }
-      if (split.note !== undefined && split.note !== null) {
-        if (!isValidString(split.note, 0, 2000, true)) {
-          errors.push(makeError(`splits[${idx}].note`, "too_long", "split note must be a safe string up to 2000 chars"));
+    if (!Array.isArray(payload.splits) || payload.splits.length === 0) {
+      errors.push(makeError("splits", "required", "splits array must contain at least one split"));
+    } else {
+      let splitsSum = 0;
+      payload.splits.forEach((split: any, idx: number) => {
+        if (!split || typeof split !== "object") {
+          errors.push(makeError(`splits[${idx}]`, "invalid_type", "split must be an object"));
+          return;
         }
-      }
-    });
+        if (!isValidString(split.id, 1, 100)) {
+          errors.push(makeError(`splits[${idx}].id`, "required", "split id is required"));
+        }
+        if (!isValidString(split.categoryId, 1, 100)) {
+          errors.push(makeError(`splits[${idx}].categoryId`, "required", "split categoryId is required"));
+        }
+        if (!isValidMinorAmount(split.amountMinor)) {
+          errors.push(makeError(`splits[${idx}].amountMinor`, "invalid_amount", "split amountMinor must be a safe non-negative integer"));
+        } else {
+          splitsSum += split.amountMinor;
+        }
+        if (split.note !== undefined && split.note !== null) {
+          if (!isValidString(split.note, 0, 2000, true)) {
+            errors.push(makeError(`splits[${idx}].note`, "too_long", "split note must be a safe string up to 2000 chars"));
+          }
+        }
+      });
 
-    if (splitsSum !== payload.totalAmountMinor) {
-      errors.push(makeError("splits", "split_sum_mismatch", "Sum of splits must equal the total amount"));
+      if (splitsSum !== payload.totalAmountMinor) {
+        errors.push(makeError("splits", "split_sum_mismatch", "Sum of splits must equal the total amount"));
+      }
     }
   }
 
@@ -323,6 +336,10 @@ export function validateTransaction(payload: any): ValidationResult {
     if (!isValidString(payload.notes, 0, 2000, true)) {
       errors.push(makeError("notes", "too_long", "notes must be a safe string up to 2000 chars"));
     }
+  }
+
+  if (typeof payload.archived !== "boolean") {
+    errors.push(makeError("archived", "invalid_type", "archived must be a boolean"));
   }
 
   if (!isValidTimestamp(payload.createdAt)) {
