@@ -2,6 +2,26 @@
 
 All notable changes to KoalaFinance will be documented in this file.
 
+## [0.2.0] - 2026-06-23
+
+### Added
+- **Accounts, Categories, and Recurring Items Management (Phase 6B)**:
+  - Accounts management view with signed opening/current balance support.
+  - Categories view grouped by kind with client-side active duplicate checking.
+  - Recurring items management ledger with pause toggles, necessity grades, and optional account references.
+  - Subscriptions & Fixed Costs derived view calculating monthly/yearly equivalents and cancel candidate metrics.
+- **In-Memory Svelte Store & Metadata Wrapping**:
+  - Encapsulated decrypted records in a `LoadedFinanceRecord<T>` wrapper to preserve backend record IDs and revisions for updates.
+  - Automated PUT vs. POST routing selection based on metadata presence.
+  - Tolerated partial decryption failures by skipping invalid payloads and showing a user-visible warning banner with a reload button.
+- **Money Parser & Formatter Helpers**:
+  - Implemented strict comma/dot parser mapping Euros to integer minor units (cents) with safe bounds checks.
+- **Build Safety & Privacy Hardening**:
+  - Prevented plaintext leakage in console warnings (only technical fields logged).
+  - Enforced archive-over-delete semantics across all finance views (no hard deletes).
+  - Random UUID category ID seeding to prevent name-derived metadata leakage to the server.
+  - Added automated static analysis tests ensuring no `{@html}` tags or local storage of keys/vault state exist in Svelte/TS files.
+
 ## [0.1.0] - 2026-06-23
 
 ### Added

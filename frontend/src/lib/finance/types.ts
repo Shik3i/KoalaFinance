@@ -53,6 +53,7 @@ export interface RecurringItemRecord {
   necessity: Necessity;
   notes?: string;
   active: boolean;
+  archived: boolean;
   createdAt: string; // ISO Timestamp
   updatedAt: string; // ISO Timestamp
 }
@@ -112,3 +113,11 @@ export interface ValidationError {
 export type ValidationResult =
   | { ok: true }
   | { ok: false; errors: ValidationError[] };
+
+export interface LoadedFinanceRecord<T> {
+  recordId: string;        // backend encrypted_records.id
+  recordType: FinanceRecordType;
+  revision?: number;
+  updatedAt?: string;      // backend metadata if available
+  payload: T;              // decrypted domain payload
+}

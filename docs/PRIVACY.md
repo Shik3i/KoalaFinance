@@ -41,3 +41,11 @@ The site administrator role manages technical health and user registration. To p
   - Count of total encrypted records (without knowing their contents).
   - Security audit events (e.g. failed login attempts, password changes).
   - Global application settings (e.g. public registration toggle).
+
+---
+
+## 4. No Deterministic Identifiers
+
+To prevent metadata leakage or dictionary attacks against encrypted categories and accounts:
+- **Random Record IDs**: Every financial record ID (e.g. `category` or `account` ID) is generated in-browser as a random UUID (RFC 4122). No ID is derived from financial names, hashes, or kinds.
+- **Client-Side Deduplication**: Seeding default categories uses client-side decryption to check for existing categories, ensuring that no names or name-derived IDs are ever exposed to the server.

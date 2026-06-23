@@ -111,6 +111,8 @@ The core security of KoalaFinance relies on browser-native Web Crypto APIs.
 To prevent leakage, the server must only track general metadata.
 - **Allowed `record_type` values**: `account`, `category`, `recurring_item`, `transaction`, `budget`, `settings`.
 - **Prohibited values**: Specific names or tags reflecting specific financial activities (e.g., `netflix_subscription`, `salary_income`).
+- **Record IDs**: All financial record IDs (including category, account, transaction, and budget records) are randomly generated client-side (UUIDs) and never derived from financial names, user inputs, or category identifiers.
+- **Default Category Seeding Idempotency**: Seeding is idempotent and checked client-side. The client decrypts existing category records to verify whether defaults are already present before sending any new category creation requests, preventing duplicate seeding without leaking category names or establishing deterministic ID generation patterns.
 
 ---
 

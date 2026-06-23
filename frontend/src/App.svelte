@@ -21,8 +21,21 @@
   import RecoveryConfirm from './lib/components/RecoveryConfirm.svelte';
   import AdminPanel from './lib/components/AdminPanel.svelte';
   import DebugPanel from './lib/components/DebugPanel.svelte';
-  import { toEncryptedRecordInput } from './lib/finance/records';
+  import { toEncryptedRecordInput, fromEncryptedRecord } from './lib/finance/records';
   import { generateDefaultCategories } from './lib/finance/defaults';
+  import {
+    setVault,
+    clearVault,
+    warning as storeWarning,
+    refreshRecords,
+    totalRecordsLoaded,
+    successfullyDecryptedCount,
+    skippedRecordsCount
+  } from './lib/finance/store';
+  import AccountsView from './lib/components/finance/AccountsView.svelte';
+  import CategoriesView from './lib/components/finance/CategoriesView.svelte';
+  import RecurringItemsView from './lib/components/finance/RecurringItemsView.svelte';
+  import SubscriptionsView from './lib/components/finance/SubscriptionsView.svelte';
 
   // --- State Variables ---
   let isLoginView = true;
@@ -390,6 +403,7 @@
       decryptedRecords = [];
       activeTab = 'vaults';
       selectedVaultId = '';
+      clearVault();
     }
   }
 
@@ -453,11 +467,42 @@
       }
 
       vaultCreationMessage = `Vault created successfully. Seeding default categories...`;
-      const defaultCategories = generateDefaultCategories(data.id);
+      
+      // Fetch existing records for this vault and decrypt categories client-side to prevent duplicates on retry
+      const existingCategories = new Set<string>();
+      try {
+        const recordsRes = await fetch(`/api/vaults/${data.id}/records`);
+        if (recordsRes.ok) {
+          const records = await recordsRes.json();
+          for (const rec of records) {
+            if (rec.record_type === "category") {
+              try {
+                const plaintextCat = await fromEncryptedRecord(rec, vaultKey);
+                if (plaintextCat && plaintextCat.kind && plaintextCat.name) {
+                  const key = `${plaintextCat.kind}:${plaintextCat.name.trim().toLowerCase()}`;
+                  existingCategories.add(key);
+                }
+              } catch (decErr) {
+                console.error("Failed to decrypt category for retry deduplication", decErr);
+              }
+            }
+          }
+        }
+      } catch (fetchErr) {
+        console.error("Failed to fetch existing records for duplicate check", fetchErr);
+      }
+
+      const defaultCategories = generateDefaultCategories();
       let seededCount = 0;
       let seedFailed = false;
 
       for (const cat of defaultCategories) {
+        const key = `${cat.kind}:${cat.name.trim().toLowerCase()}`;
+        if (existingCategories.has(key)) {
+          seededCount++; // Already seeded
+          continue;
+        }
+
         try {
           const recordInput = await toEncryptedRecordInput("category", cat, vaultKey);
           const postRes = await fetch(`/api/vaults/${data.id}/records`, {
@@ -496,6 +541,7 @@
 
       activeVaultKey = vaultKey;
       selectedVaultId = data.id;
+      await setVault(data.id, vaultKey);
       await refreshVaults();
     } catch (err: any) {
       vaultCreationMessage = err.message;
@@ -507,9 +553,13 @@
       const res = await fetch('/api/vaults');
       if (res.ok) {
         vaultsList = await res.json();
-        if (vaultsList.length > 0 && !selectedVaultId) {
-          selectedVaultId = vaultsList[0].id;
-          await selectVault();
+        if (vaultsList.length > 0) {
+          if (!selectedVaultId) {
+            selectedVaultId = vaultsList[0].id;
+            await selectVault();
+          } else if (!activeVaultKey) {
+            await selectVault();
+          }
         }
       }
     } catch (err) {
@@ -528,6 +578,7 @@
     try {
       activeVaultKey = await unwrapVaultKey(vault.encrypted_vault_key, decryptedPrivateKey);
       await fetchAndDecryptRecords();
+      await setVault(selectedVaultId, activeVaultKey);
     } catch (err) {
       console.error('Failed to unwrap vault key.', err);
     }
@@ -620,6 +671,7 @@
     activeVaultKey = null;
     decryptedRecords = [];
     unlockErrorMessage = '';
+    clearVault();
   }
 
   function changeTab(tab: string) {
@@ -848,7 +900,35 @@
       />
 
       <div class="dashboard-content">
-        {#if activeTab === 'vaults'}
+        {#if activeVaultKey && $storeWarning}
+          <div class="store-warning-banner">
+            <div class="warning-content">
+              <span class="warning-icon">⚠️</span>
+              <div class="warning-text">
+                <strong>Partial Decryption Failure:</strong> {$storeWarning}
+                <div class="warning-stats">
+                  Loaded: {$totalRecordsLoaded} | Decrypted: {$successfullyDecryptedCount} | Skipped: {$skippedRecordsCount}
+                </div>
+              </div>
+            </div>
+            <button class="warning-reload-btn" on:click={refreshRecords}>
+              🔄 Reload & Decrypt
+            </button>
+          </div>
+        {/if}
+
+        {#if ['accounts', 'categories', 'recurring', 'subscriptions'].includes(activeTab) && !activeVaultKey}
+          <div class="locked-finance-view">
+            <div class="locked-card">
+              <span class="lock-icon">🔒</span>
+              <h3>Vault Key Required</h3>
+              <p>You must select and unlock an encrypted vault before you can view or manage financial data.</p>
+              <button class="go-vaults-btn" on:click={() => activeTab = 'vaults'}>
+                Go to Vaults Selection
+              </button>
+            </div>
+          </div>
+        {:else if activeTab === 'vaults'}
           <div class="vaults-view">
             <div class="view-header">
               <div>
@@ -963,6 +1043,14 @@
               </div>
             </div>
           </div>
+        {:else if activeTab === 'accounts'}
+          <AccountsView {csrfToken} />
+        {:else if activeTab === 'categories'}
+          <CategoriesView {csrfToken} />
+        {:else if activeTab === 'recurring'}
+          <RecurringItemsView {csrfToken} />
+        {:else if activeTab === 'subscriptions'}
+          <SubscriptionsView />
         {:else if activeTab === 'admin' && currentUser.role === 'admin'}
           <AdminPanel csrfToken={csrfToken} />
         {:else if activeTab === 'debug'}
@@ -1589,5 +1677,112 @@
     text-align: center;
     color: #475569;
     font-size: 0.85rem;
+  }
+
+  /* Locked finance view */
+  .locked-finance-view {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 60vh;
+    width: 100%;
+  }
+
+  .locked-card {
+    background: rgba(17, 24, 39, 0.6);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 3rem 2rem;
+    max-width: 450px;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  .lock-icon {
+    font-size: 3rem;
+    display: block;
+    margin-bottom: 1.5rem;
+    filter: drop-shadow(0 0 12px rgba(244, 63, 94, 0.3));
+  }
+
+  .locked-card h3 {
+    color: #f8fafc;
+    margin: 0 0 0.75rem 0;
+    font-size: 1.35rem;
+  }
+
+  .locked-card p {
+    color: #94a3b8;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin: 0 0 2rem 0;
+  }
+
+  .go-vaults-btn {
+    background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+    border: none;
+    color: white;
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .go-vaults-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+  }
+
+  /* Store Warning Banner */
+  .store-warning-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 2rem;
+    color: #f59e0b;
+  }
+
+  .warning-content {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .warning-icon {
+    font-size: 1.5rem;
+  }
+
+  .warning-text {
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  .warning-stats {
+    font-size: 0.8rem;
+    color: #d97706;
+    margin-top: 0.25rem;
+  }
+
+  .warning-reload-btn {
+    background-color: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .warning-reload-btn:hover {
+    background-color: rgba(245, 158, 11, 0.25);
   }
 </style>

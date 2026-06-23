@@ -32,6 +32,38 @@
       <span class="label">Vaults Selection</span>
     </button>
 
+    <button
+      class="menu-item {activeTab === 'accounts' ? 'active' : ''}"
+      on:click={() => onChangeTab('accounts')}
+    >
+      <span class="icon">🏦</span>
+      <span class="label">Accounts</span>
+    </button>
+
+    <button
+      class="menu-item {activeTab === 'categories' ? 'active' : ''}"
+      on:click={() => onChangeTab('categories')}
+    >
+      <span class="icon">🗂️</span>
+      <span class="label">Categories</span>
+    </button>
+
+    <button
+      class="menu-item {activeTab === 'recurring' ? 'active' : ''}"
+      on:click={() => onChangeTab('recurring')}
+    >
+      <span class="icon">🔄</span>
+      <span class="label">Recurring Items</span>
+    </button>
+
+    <button
+      class="menu-item {activeTab === 'subscriptions' ? 'active' : ''}"
+      on:click={() => onChangeTab('subscriptions')}
+    >
+      <span class="icon">💳</span>
+      <span class="label">Subscriptions</span>
+    </button>
+
     {#if currentUser && currentUser.role === 'admin'}
       <button
         class="menu-item {activeTab === 'admin' ? 'active' : ''}"

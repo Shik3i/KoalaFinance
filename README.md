@@ -8,11 +8,11 @@ KoalaFinance is a self-hosted, privacy-first, client-side end-to-end encrypted p
 
 ---
 
-## 1. Implemented Features (Phase 5)
+## 1. Implemented Features (Phase 6B)
 
-Currently, the core security, database, and cryptographic foundations are fully implemented and verified:
+Currently, the core security, database, cryptographic foundations, and early finance models are fully implemented:
 
-* **Go Backend**: A lightweight Go server handling authentication, session mapping, CSRF protection, and REST endpoints.
+* **Go Backend**: A lightweight Go server handling authentication, session mapping, CSRF protection, and generic encrypted record REST endpoints.
 * **Svelte/Vite Frontend**: A modern single-page application built with Svelte, Vite, and TypeScript.
 * **SQLite Storage**: Database configuration running in **WAL mode**, enforcing SQLite foreign keys, with automatic embedded migration runner on startup.
 * **Client-Side Cryptography Foundation**:
@@ -24,28 +24,34 @@ Currently, the core security, database, and cryptographic foundations are fully 
 * **Secure Sessions & CSRF**: HttpOnly secure cookies + session-bound CSRF token validation.
 * **Admin Bootstrap**: Automatic site admin creation upon first launch via environment variables.
 * **Registration Toggle**: Ability for site administrators to enable or disable public signups.
-* **Bootstrap-Admin Crypto Setup**: Wizard flow prompting bootsrapped server-side admin users to generate key pairs, write down a recovery key, and submit wrapped keys to backend upon first login.
+* **Bootstrap-Admin Crypto Setup**: Wizard flow prompting bootstrapped server-side admin users to generate key pairs, write down a recovery key, and submit wrapped keys to backend upon first login.
 * **Recovery Key Confirmation**: Normalization-insensitive input matching (ignoring spaces and hyphens) forcing users to prove they have saved their recovery key before enabling encryption.
 * **In-Memory Keys Lock Overlay**: Automatic password unlock prompt blocking application views if keys are cleared from browser memory (e.g. on page refresh). All keys reside strictly in-memory and are never written to `localStorage` or `sessionStorage`.
 * **Vault Selector & Simple Encrypted Records**: Allows selecting vaults, creating new vaults, writing raw JSON records, and executing in-memory AES-GCM encryption/decryption roundtrips.
 * **Admin Dashboard**: Technical stats (user count, vault count, record count) and registration settings.
 * **Developer Verification Panel**: Dedicated debug diagnostics panel showing key parameters and crypto logs.
+* **Accounts View**: Manage E2E encrypted account definitions with support for signed opening and current balances.
+* **Categories View**: Grouped active category creation with client-side deduplication checking by normalized name + kind.
+* **Recurring Items Ledger**: Pausable recurring income and expenses with necessity tags and optional account associations.
+* **Subscriptions & Fixed Costs View**: Client-side derived list from recurring expenses calculating monthly/yearly cost equivalents and cancel candidates.
+* **In-Memory Store & Partial Failure Tolerance**: Svelte stores wrap records in a `LoadedFinanceRecord<T>` interface keeping the backing database record IDs. Decryption failures on individual records do not crash the app, but display a warning banner with reloading options.
+* **Archive-over-Delete Semantics**: Financial records are marked `archived: true` during deletion to prevent irreversible loss, maintaining complete client-side security.
 
 ---
 
-## 2. What Is NOT Implemented Yet (Phase 6+)
+## 2. What Is NOT Implemented Yet (Phase 6C+)
 
 The following features are out of scope for the current foundation and will be implemented in future releases:
 
-- **Full Accounts / Categories / Transactions UI** (only raw JSON record verification exists now)
-- **Recurring Costs & Subscription Tracker**
-- **Envelope Budgeting UI**
+- **Transaction UI & Ledger View** (individual transaction records editing)
 - **Split Transaction Editor**
+- **Transfer Editor**
+- **Envelope Budgeting UI**
 - **Financial Reports & Charts**
 - **Backup / Export / Import utilities**
 - **Password Reset UX**
 - **Docker Packaging**
-- **Production Hardening** beyond the foundational Web Crypto boundaries
+- **Production Hardening** beyond the foundational boundaries
 
 ---
 

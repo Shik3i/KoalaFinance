@@ -221,6 +221,10 @@ export function validateRecurringItem(payload: any): ValidationResult {
     errors.push(makeError("updatedAt", "invalid_timestamp", "updatedAt must be a valid ISO timestamp"));
   }
 
+  if (typeof payload.archived !== "boolean") {
+    errors.push(makeError("archived", "invalid_type", "archived must be a boolean"));
+  }
+
   return errors.length === 0 ? { ok: true } : { ok: false, errors };
 }
 

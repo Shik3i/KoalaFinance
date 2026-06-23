@@ -32,17 +32,20 @@ const DEFAULT_CATEGORIES: DefaultCategoryInfo[] = [
 ];
 
 /**
- * Generates a list of default CategoryRecord objects for a given vault.
- * To avoid duplicate seeding on retries, IDs are deterministic per vault.
+ * Generates a list of default CategoryRecord objects.
+ * IDs are random UUIDs to ensure server-visible metadata remains generic.
  */
-export function generateDefaultCategories(vaultId: string): CategoryRecord[] {
+export function generateDefaultCategories(): CategoryRecord[] {
   const timestamp = new Date().toISOString();
   
   return DEFAULT_CATEGORIES.map((info) => {
-    // Generate stable, unique ID based on vaultId and category contents
-    // This allows safe retries without duplication on conflicts
-    const normalizedName = info.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const id = `cat_${vaultId.substring(0, 8)}_${info.kind}_${normalizedName}`;
+    const id = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID()
+      : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === "x" ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
 
     return {
       schemaVersion: 1,

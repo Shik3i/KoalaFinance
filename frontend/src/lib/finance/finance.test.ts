@@ -1,6 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { generateVaultKey } from "../crypto";
-import { isValidMinorAmount, isValidSignedMinorAmount } from "./money";
+import { isValidMinorAmount, isValidSignedMinorAmount, parseEuroToMinor, formatMinorAsEuro } from "./money";
+import { get } from "svelte/store";
+import {
+  categories as categoriesStore,
+  warning as storeWarning,
+  totalRecordsLoaded,
+  successfullyDecryptedCount,
+  skippedRecordsCount,
+  setVault,
+  clearVault,
+  saveRecord,
+  archiveRecord
+} from "./store";
 import { isValidPlainDate, isValidBudgetMonth, isValidTimestamp } from "./dates";
 import {
   validateAccount,
@@ -161,6 +173,7 @@ describe("Finance Domain Model & Helpers", () => {
         categoryId: "cat_1",
         necessity: "optional",
         active: true,
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -345,7 +358,7 @@ describe("Finance Domain Model & Helpers", () => {
 
   describe("Seeding Default Categories", () => {
     it("should generate category records with correct schema types", () => {
-      const list = generateDefaultCategories("vault_12345678");
+      const list = generateDefaultCategories();
       expect(list.length).toBeGreaterThan(0);
       
       list.forEach((cat) => {
@@ -356,29 +369,60 @@ describe("Finance Domain Model & Helpers", () => {
     });
 
     it("should include Software & Tools and Hosting & Domains expense categories", () => {
-      const list = generateDefaultCategories("vault_12345678");
+      const list = generateDefaultCategories();
       const names = list.map((c) => c.name);
       expect(names).toContain("Software & Tools");
       expect(names).toContain("Hosting & Domains");
     });
 
-    it("should generate deterministic IDs to prevent double seeding", () => {
-      const list1 = generateDefaultCategories("vault_123");
-      const list2 = generateDefaultCategories("vault_123");
-      expect(list1[0].id).toBe(list2[0].id);
+    it("should generate random UUID-like IDs for privacy hardening, not name-derived deterministic values", () => {
+      const list1 = generateDefaultCategories();
+      const list2 = generateDefaultCategories();
+      
+      // Verification of randomness
+      expect(list1[0].id).not.toBe(list2[0].id);
 
-      const list3 = generateDefaultCategories("vault_abc");
-      expect(list1[0].id).not.toBe(list3[0].id); // Unique per vault
+      // Verify that IDs do not contain names/kinds
+      list1.forEach((cat) => {
+        expect(cat.id).not.toContain(cat.name.toLowerCase());
+        expect(cat.id).not.toContain(cat.kind);
+        // Match UUID length / pattern (random UUID length is 36)
+        expect(cat.id.length).toBe(36);
+      });
     });
 
     it("should not contain duplicates by kind + name", () => {
-      const list = generateDefaultCategories("vault_123");
+      const list = generateDefaultCategories();
       const seen = new Set<string>();
       for (const cat of list) {
         const key = `${cat.kind}:${cat.name.toLowerCase()}`;
         expect(seen.has(key)).toBe(false);
         seen.add(key);
       }
+    });
+
+    it("should support client-side deduplication check on retry", () => {
+      const list = generateDefaultCategories();
+      const firstHalf = list.slice(0, Math.floor(list.length / 2));
+      
+      // Simulate client-side decrypted duplicate check mapping:
+      const existingKeys = new Set<string>();
+      for (const cat of firstHalf) {
+        existingKeys.add(`${cat.kind}:${cat.name.trim().toLowerCase()}`);
+      }
+
+      // Seeding run logic:
+      const toSeed = list.filter((cat) => {
+        const key = `${cat.kind}:${cat.name.trim().toLowerCase()}`;
+        return !existingKeys.has(key);
+      });
+
+      // Verify it skipped already existing ones
+      expect(toSeed.length).toBe(list.length - firstHalf.length);
+      toSeed.forEach((cat) => {
+        const key = `${cat.kind}:${cat.name.trim().toLowerCase()}`;
+        expect(existingKeys.has(key)).toBe(false);
+      });
     });
   });
 
@@ -394,6 +438,7 @@ describe("Finance Domain Model & Helpers", () => {
       categoryId: "c",
       necessity: "essential",
       active: true,
+      archived: false,
       createdAt: "",
       updatedAt: ""
     });
@@ -431,19 +476,19 @@ describe("Finance Domain Model & Helpers", () => {
       const items: RecurringItemRecord[] = [
         {
           schemaVersion: 1, id: "1", name: "Salary", kind: "income", amountMinor: 500000, currency: "EUR",
-          interval: "monthly", necessity: "essential", active: true, createdAt: "", updatedAt: "", categoryId: "c"
+          interval: "monthly", necessity: "essential", active: true, archived: false, createdAt: "", updatedAt: "", categoryId: "c"
         },
         {
           schemaVersion: 1, id: "2", name: "Side Hustle", kind: "income", amountMinor: 12000, currency: "EUR",
-          interval: "yearly", necessity: "useful", active: true, createdAt: "", updatedAt: "", categoryId: "c"
+          interval: "yearly", necessity: "useful", active: true, archived: false, createdAt: "", updatedAt: "", categoryId: "c"
         },
         {
           schemaVersion: 1, id: "3", name: "Rent", kind: "expense", amountMinor: 100000, currency: "EUR",
-          interval: "monthly", necessity: "essential", active: true, createdAt: "", updatedAt: "", categoryId: "c"
+          interval: "monthly", necessity: "essential", active: true, archived: false, createdAt: "", updatedAt: "", categoryId: "c"
         },
         {
           schemaVersion: 1, id: "4", name: "Netflix", kind: "expense", amountMinor: 1200, currency: "EUR",
-          interval: "monthly", necessity: "optional", active: false, createdAt: "", updatedAt: "", categoryId: "c"
+          interval: "monthly", necessity: "optional", active: false, archived: false, createdAt: "", updatedAt: "", categoryId: "c"
         }
       ];
 
@@ -576,6 +621,335 @@ describe("Finance Domain Model & Helpers", () => {
           toEncryptedRecordInput(f as any, {}, vaultKey)
         ).rejects.toThrow(/Invalid record type/);
       }
+    });
+
+    it("should ensure no default category names appear in encrypted record metadata fields", async () => {
+      const vaultKey = await generateVaultKey();
+      const list = generateDefaultCategories();
+      for (const cat of list) {
+        const encryptedRecord = await toEncryptedRecordInput("category", cat, vaultKey);
+        
+        // The server-visible fields must be generic
+        expect(encryptedRecord.record_type).toBe("category");
+        expect(encryptedRecord.schema_version).toBe(1);
+        expect(encryptedRecord.crypto_version).toBe(1);
+        
+        // Ensure ID is completely generic (UUID) and doesn't leak category details
+        expect(cat.id).not.toContain(cat.name.toLowerCase());
+        expect(cat.id).not.toContain(cat.kind);
+      }
+    });
+  });
+
+  describe("Phase 6B Additional Tests", () => {
+    describe("Money Input Helpers", () => {
+      it("should parse valid euro strings to minor units", () => {
+        expect(parseEuroToMinor("12")).toEqual({ ok: true, value: 1200 });
+        expect(parseEuroToMinor("12,99")).toEqual({ ok: true, value: 1299 });
+        expect(parseEuroToMinor("12.99")).toEqual({ ok: true, value: 1299 });
+        expect(parseEuroToMinor("0,01")).toEqual({ ok: true, value: 1 });
+        expect(parseEuroToMinor("001,05")).toEqual({ ok: true, value: 105 });
+        expect(parseEuroToMinor("12,9")).toEqual({ ok: true, value: 1290 });
+      });
+
+      it("should reject invalid formats", () => {
+        expect(parseEuroToMinor("12.")).toEqual({ ok: false, error: "Invalid number format" });
+        expect(parseEuroToMinor(".99")).toEqual({ ok: false, error: "Invalid number format" });
+        expect(parseEuroToMinor("")).toEqual({ ok: false, error: "Empty input" });
+        expect(parseEuroToMinor("   ")).toEqual({ ok: false, error: "Empty input" });
+        expect(parseEuroToMinor("letters")).toEqual({ ok: false, error: "Invalid number format" });
+        expect(parseEuroToMinor("12,999")).toEqual({ ok: false, error: "Invalid number format" });
+        expect(parseEuroToMinor("-12")).toEqual({ ok: false, error: "Negative amounts not allowed" });
+      });
+
+      it("should parse negative values when signed is enabled", () => {
+        expect(parseEuroToMinor("12", { signed: true })).toEqual({ ok: true, value: 1200 });
+        expect(parseEuroToMinor("-12", { signed: true })).toEqual({ ok: true, value: -1200 });
+        expect(parseEuroToMinor("-0,01", { signed: true })).toEqual({ ok: true, value: -1 });
+      });
+
+      it("should reject values exceeding safe integer cents", () => {
+        expect(parseEuroToMinor("90071992547409.92")).toEqual({ ok: false, error: "Amount is too large" });
+        expect(parseEuroToMinor("9007199254740992", { signed: true })).toEqual({ ok: false, error: "Amount is too large" });
+      });
+
+      it("should format minor units back to euro decimals", () => {
+        expect(formatMinorAsEuro(1200)).toBe("12.00");
+        expect(formatMinorAsEuro(1299)).toBe("12.99");
+        expect(formatMinorAsEuro(1)).toBe("0.01");
+        expect(formatMinorAsEuro(-100)).toBe("-1.00");
+        expect(formatMinorAsEuro(-5)).toBe("-0.05");
+      });
+    });
+
+    describe("Category Duplicate Checking Logic", () => {
+      it("should compare kind and normalized name only for active categories", () => {
+        const list = [
+          {
+            recordId: "rec1",
+            recordType: "category" as const,
+            payload: { schemaVersion: 1 as const, id: "cat1", name: "Groceries", kind: "expense" as const, archived: false, createdAt: "", updatedAt: "" }
+          },
+          {
+            recordId: "rec2",
+            recordType: "category" as const,
+            payload: { schemaVersion: 1 as const, id: "cat2", name: "  groceries  ", kind: "expense" as const, archived: true, createdAt: "", updatedAt: "" }
+          }
+        ];
+
+        const isDuplicate = (name: string, kind: "expense" | "income", excludeId?: string) => {
+          const norm = name.trim().toLowerCase();
+          return list.some(c => {
+            if (c.payload.archived) return false;
+            if (excludeId && c.payload.id === excludeId) return false;
+            return c.payload.kind === kind && c.payload.name.trim().toLowerCase() === norm;
+          });
+        };
+
+        expect(isDuplicate("groceries", "expense")).toBe(true);
+        expect(isDuplicate("  GROCERIES  ", "expense")).toBe(true);
+        expect(isDuplicate("groceries", "expense", "cat1")).toBe(false);
+        expect(isDuplicate("groceries", "income")).toBe(false);
+      });
+    });
+
+    describe("Store & Metadata Handling", () => {
+      const originalFetch = (globalThis as any).fetch;
+
+      afterEach(() => {
+        (globalThis as any).fetch = originalFetch;
+        clearVault();
+      });
+
+      it("should load valid records and preserve backend metadata", async () => {
+        const vaultKey = await generateVaultKey();
+        
+        const catPayload: CategoryRecord = {
+          schemaVersion: 1,
+          id: "cat1",
+          name: "Groceries",
+          kind: "expense",
+          archived: false,
+          createdAt: "2026-06-23T18:00:00Z",
+          updatedAt: "2026-06-23T18:00:00Z"
+        };
+        const encCat = await toEncryptedRecordInput("category", catPayload, vaultKey);
+
+        const mockResponse = [
+          {
+            id: "backend_rec_1",
+            record_type: "category",
+            schema_version: encCat.schema_version,
+            crypto_version: encCat.crypto_version,
+            encrypted_payload: encCat.encrypted_payload,
+            nonce: encCat.nonce,
+            revision: 2,
+            updated_at: "2026-06-23T18:05:00Z"
+          }
+        ];
+
+        (globalThis as any).fetch = async () => {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => mockResponse
+          } as any;
+        };
+
+        await setVault("vault1", vaultKey);
+
+        const loadedCats = get(categoriesStore);
+        expect(loadedCats.length).toBe(1);
+        expect(loadedCats[0].recordId).toBe("backend_rec_1");
+        expect(loadedCats[0].revision).toBe(2);
+        expect(loadedCats[0].updatedAt).toBe("2026-06-23T18:05:00Z");
+        expect(loadedCats[0].payload).toEqual(catPayload);
+        expect(get(totalRecordsLoaded)).toBe(1);
+        expect(get(successfullyDecryptedCount)).toBe(1);
+        expect(get(skippedRecordsCount)).toBe(0);
+        expect(get(storeWarning)).toBeNull();
+      });
+
+      it("should tolerate partial failures and skip bad records", async () => {
+        const vaultKey = await generateVaultKey();
+
+        const mockResponse = [
+          {
+            id: "backend_bad_rec",
+            record_type: "category",
+            schema_version: 1,
+            crypto_version: 1,
+            encrypted_payload: "corrupt_base64",
+            nonce: "nonce_val",
+            revision: 1,
+            updated_at: "2026-06-23T18:05:00Z"
+          }
+        ];
+
+        let warningLogged = false;
+        const originalWarn = console.warn;
+        console.warn = (msg, meta) => {
+          if (msg.includes("Skipped invalid decrypted finance record")) {
+            warningLogged = true;
+            expect(meta).toHaveProperty("recordType");
+            expect(meta).toHaveProperty("recordId");
+            expect(meta).toHaveProperty("errorCodes");
+            expect(meta).not.toHaveProperty("name");
+            expect(meta).not.toHaveProperty("payload");
+          }
+        };
+
+        (globalThis as any).fetch = async () => {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => mockResponse
+          } as any;
+        };
+
+        await setVault("vault1", vaultKey);
+
+        console.warn = originalWarn;
+
+        expect(get(categoriesStore).length).toBe(0);
+        expect(get(totalRecordsLoaded)).toBe(1);
+        expect(get(successfullyDecryptedCount)).toBe(0);
+        expect(get(skippedRecordsCount)).toBe(1);
+        expect(warningLogged).toBe(true);
+        expect(get(storeWarning)).toContain("1 record(s) failed to decrypt/validate");
+      });
+
+      it("should pick PUT/POST path depending on recordId, and archiving sets archived: true", async () => {
+        const vaultKey = await generateVaultKey();
+        await setVault("vault1", vaultKey);
+
+        let requestedUrl = "";
+        let requestedMethod = "";
+        let requestedBody: any = null;
+
+        (globalThis as any).fetch = async (url: string, opts?: any) => {
+          const method = opts?.method || "GET";
+          if (method === "POST" || method === "PUT") {
+            requestedUrl = url;
+            requestedMethod = method;
+            requestedBody = JSON.parse(opts.body);
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => []
+          } as any;
+        };
+
+        const catPayload: CategoryRecord = {
+          schemaVersion: 1,
+          id: "cat1",
+          name: "Groceries",
+          kind: "expense",
+          archived: false,
+          createdAt: "2026-06-23T18:00:00Z",
+          updatedAt: "2026-06-23T18:00:00Z"
+        };
+
+        await saveRecord("category", catPayload, undefined, "csrf_token");
+        expect(requestedUrl).toBe("/api/vaults/vault1/records");
+        expect(requestedMethod).toBe("POST");
+        expect(requestedBody.id).toBe("cat1");
+
+        await saveRecord("category", catPayload, "backend_rec_1", "csrf_token");
+        expect(requestedUrl).toBe("/api/vaults/vault1/records/backend_rec_1");
+        expect(requestedMethod).toBe("PUT");
+        expect(requestedBody).not.toHaveProperty("id");
+
+        await archiveRecord("category", catPayload, "backend_rec_1", "csrf_token");
+        expect(requestedUrl).toBe("/api/vaults/vault1/records/backend_rec_1");
+        expect(requestedMethod).toBe("PUT");
+      });
+    });
+
+    describe("Subscriptions View Derivation Calculations", () => {
+      it("should derive active subscriptions, exclude income/archived/inactive, and sum cancel candidates", () => {
+        const items = [
+          {
+            schemaVersion: 1 as const, id: "1", name: "Netflix", kind: "expense" as const, amountMinor: 1500, currency: "EUR" as const,
+            interval: "monthly" as const, categoryId: "cat_1", necessity: "optional" as const, active: true, archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1 as const, id: "2", name: "Gym Membership", kind: "expense" as const, amountMinor: 36000, currency: "EUR" as const,
+            interval: "yearly" as const, categoryId: "cat_1", necessity: "cancel_candidate" as const, active: true, archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1 as const, id: "3", name: "Old Gym", kind: "expense" as const, amountMinor: 40000, currency: "EUR" as const,
+            interval: "monthly" as const, categoryId: "cat_1", necessity: "cancel_candidate" as const, active: true, archived: true, createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1 as const, id: "4", name: "Spotify", kind: "expense" as const, amountMinor: 999, currency: "EUR" as const,
+            interval: "monthly" as const, categoryId: "cat_1", necessity: "optional" as const, active: false, archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1 as const, id: "5", name: "Salary", kind: "income" as const, amountMinor: 300000, currency: "EUR" as const,
+            interval: "monthly" as const, categoryId: "cat_1", necessity: "essential" as const, active: true, archived: false, createdAt: "", updatedAt: ""
+          }
+        ];
+
+        const activeExpenses = items.filter(i => i.kind === "expense" && i.active && !i.archived);
+        expect(activeExpenses.length).toBe(2);
+        expect(activeExpenses.map(i => i.id)).toContain("1");
+        expect(activeExpenses.map(i => i.id)).toContain("2");
+
+        const cancelCandidates = activeExpenses.filter(i => i.necessity === "cancel_candidate");
+        expect(cancelCandidates.length).toBe(1);
+        expect(cancelCandidates[0].id).toBe("2");
+
+        const totalMonthlyCancelCandidates = cancelCandidates.reduce((sum, i) => sum + monthlyEquivalentMinor(i), 0);
+        const totalYearlyCancelCandidates = cancelCandidates.reduce((sum, i) => sum + yearlyEquivalentMinor(i), 0);
+
+        expect(totalMonthlyCancelCandidates).toBe(3000);
+        expect(totalYearlyCancelCandidates).toBe(36000);
+      });
+    });
+
+    describe("Build & Privacy Safety Static Analysis", () => {
+      // @ts-ignore
+      const fs = require("fs");
+      // @ts-ignore
+      const path = require("path");
+
+      function walkDir(dir: string, callback: (filePath: string) => void) {
+        if (!fs.existsSync(dir)) return;
+        fs.readdirSync(dir).forEach((f: string) => {
+          const dirPath = path.join(dir, f);
+          const isDirectory = fs.statSync(dirPath).isDirectory();
+          if (isDirectory) {
+            walkDir(dirPath, callback);
+          } else {
+            callback(dirPath);
+          }
+        });
+      }
+
+      it("should contain absolutely no Svelte {@html} tags or storage usage for keys/state", () => {
+        // @ts-ignore
+        const srcDir = path.resolve(__dirname, "../../");
+        let svelteFilesCount = 0;
+
+        walkDir(srcDir, (filePath) => {
+          if (filePath.includes(".test.ts") || filePath.includes(".spec.")) return;
+          if (filePath.endsWith(".svelte") || filePath.endsWith(".ts")) {
+            svelteFilesCount++;
+            const content = fs.readFileSync(filePath, "utf-8");
+            
+            expect(content).not.toContain("{@html");
+            
+            const cleanContent = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+            
+            expect(cleanContent).not.toMatch(/localStorage\.setItem\([^)]*?(?:key|vault|decrypt|payload)/i);
+            expect(cleanContent).not.toMatch(/sessionStorage\.setItem\([^)]*?(?:key|vault|decrypt|payload)/i);
+          }
+        });
+
+        expect(svelteFilesCount).toBeGreaterThan(0);
+      });
     });
   });
 });
