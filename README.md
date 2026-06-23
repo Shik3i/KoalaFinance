@@ -1,0 +1,3 @@
+# KoalaFinance
+
+Ein Finanzverwaltungs-Projekt.
