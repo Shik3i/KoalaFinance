@@ -1,0 +1,16 @@
+# Normalize line endings
+* text=auto
+
+# Denote files that should always have LF line endings
+*.go text eol=lf
+*.ts text eol=lf
+*.svelte text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.sql text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf
+LICENSE text eol=lf

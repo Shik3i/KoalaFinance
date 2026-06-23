@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Verify Go Module Tidy
+        run: |
+          cd backend
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Run Go Unit & Integration Tests
+        run: |
+          cd backend
+          go test -v ./...
+
+      - name: Verify Go Builds
+        run: |
+          cd backend
+          go build -o /dev/null ./cmd/koalafinance/... ./cmd/smoketest/...
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Frontend Tests
+        run: |
+          cd frontend
+          npm test
+
+      - name: Build Frontend Assets
+        run: |
+          cd frontend
+          npm run build
