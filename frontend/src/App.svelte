@@ -21,6 +21,8 @@
   import RecoveryConfirm from './lib/components/RecoveryConfirm.svelte';
   import AdminPanel from './lib/components/AdminPanel.svelte';
   import DebugPanel from './lib/components/DebugPanel.svelte';
+  import { toEncryptedRecordInput } from './lib/finance/records';
+  import { generateDefaultCategories } from './lib/finance/defaults';
 
   // --- State Variables ---
   let isLoginView = true;
@@ -450,7 +452,48 @@
         throw new Error(data.error || 'Failed to create vault');
       }
 
-      vaultCreationMessage = `Vault created successfully.`;
+      vaultCreationMessage = `Vault created successfully. Seeding default categories...`;
+      const defaultCategories = generateDefaultCategories(data.id);
+      let seededCount = 0;
+      let seedFailed = false;
+
+      for (const cat of defaultCategories) {
+        try {
+          const recordInput = await toEncryptedRecordInput("category", cat, vaultKey);
+          const postRes = await fetch(`/api/vaults/${data.id}/records`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': csrfToken
+            },
+            body: JSON.stringify({
+              id: cat.id,
+              ...recordInput
+            })
+          });
+
+          if (!postRes.ok) {
+            const errData = await postRes.json().catch(() => ({}));
+            if (postRes.status === 409) {
+              seededCount++; // Conflict means already seeded, which is safe
+            } else {
+              throw new Error(errData.error || `HTTP ${postRes.status}`);
+            }
+          } else {
+            seededCount++;
+          }
+        } catch (catErr: any) {
+          console.error("Failed to seed category", cat.name, catErr);
+          seedFailed = true;
+        }
+      }
+
+      if (seedFailed) {
+        vaultCreationMessage = `Vault created, but default categories failed to seed (${seededCount}/${defaultCategories.length} seeded). You can retry later.`;
+      } else {
+        vaultCreationMessage = `Vault created and default categories seeded successfully.`;
+      }
+
       activeVaultKey = vaultKey;
       selectedVaultId = data.id;
       await refreshVaults();
