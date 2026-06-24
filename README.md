@@ -8,7 +8,7 @@ KoalaFinance is a self-hosted, privacy-first, client-side end-to-end encrypted p
 
 ---
 
-## 1. Implemented Features (Phase 6D)
+## 1. Implemented Features (Phase 6E)
 
 Currently, the core security, database, cryptographic foundations, and early finance models are fully implemented:
 
@@ -33,7 +33,7 @@ Currently, the core security, database, cryptographic foundations, and early fin
 * **Accounts View**: Manage E2E encrypted account definitions with support for signed opening and current balances.
 * **Categories View**: Grouped active category creation with client-side deduplication checking by normalized name + kind.
 * **Recurring Items Ledger**: Pausable recurring income and expenses with necessity tags and optional account associations.
-* **Subscriptions & Fixed Costs View**: Client-side derived list from recurring expenses calculating monthly/yearly cost equivalents and cancel candidate metrics.
+* **Subscriptions & Fixed Costs View**: Client-side derived list of active expense recurring items.
 * **Transaction UI & Ledger View**: Create, edit, and archive Income, Expense, and Transfer transactions securely.
 * **Split Transaction Editor**: A dynamic split categories interface ensuring split sums match the total transaction amount.
 * **Transfer Editor**: Enforces positive transfer amounts and distinct source/destination accounts with zero category splits.
@@ -49,14 +49,20 @@ Currently, the core security, database, cryptographic foundations, and early fin
   - Dynamic month navigation selector for current/selected budget envelope ledger views.
   - Client-side duplicate check preventing multiple active budget envelopes for the same category and month.
   - Automated tests validating budget structure, duplicate checking, spending filters, and rollover preview calculations.
+* **Client-Side Financial Dashboard & Reports**:
+  - Monthly reports compiling Actual Income, Actual Expenses, Net Savings, and Savings Rate.
+  - Top spending categories breakdown using visual CSS horizontal progress bars.
+  - Budget health summaries aggregating planned totals, actuals, remaining limits, and overspent counts.
+  - Estimated recurring monthly outflow vs inflow estimates.
+  - Subscriptions optimization panel summarizing potential monthly/yearly savings from cancel candidates.
+  - 100% zero-knowledge privacy: data is parsed and plotted entirely in-browser; zero finance metrics are transmitted to the backend.
 
 ---
 
-## 2. What Is NOT Implemented Yet (Phase 6E+)
+## 2. What Is NOT Implemented Yet (Phase 6F+)
 
 The following features are out of scope for the current foundation and will be implemented in future releases:
 
-- **Financial Reports & Charts**
 - **Backup / Export / Import utilities**
 - **Password Reset UX**
 - **Docker Packaging**

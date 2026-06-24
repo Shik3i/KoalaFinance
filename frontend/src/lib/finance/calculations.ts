@@ -170,3 +170,102 @@ export function calculateEnvelopeRollover(
   const prevRemaining = prevPlanned - prevActual;
   return prevRemaining > 0 ? prevRemaining : 0;
 }
+
+/**
+ * Calculates actual total income for a given month (non-archived income transactions only).
+ */
+export function totalActualIncomeForMonth(
+  transactions: TransactionRecord[],
+  monthStr: string
+): number {
+  return transactions
+    .filter((tx) => !tx.archived && tx.type === "income" && tx.date && tx.date.startsWith(monthStr))
+    .reduce((sum, tx) => sum + tx.totalAmountMinor, 0);
+}
+
+/**
+ * Calculates actual total expenses for a given month (non-archived expense transactions only).
+ */
+export function totalActualExpensesForMonth(
+  transactions: TransactionRecord[],
+  monthStr: string
+): number {
+  return transactions
+    .filter((tx) => !tx.archived && tx.type === "expense" && tx.date && tx.date.startsWith(monthStr))
+    .reduce((sum, tx) => sum + tx.totalAmountMinor, 0);
+}
+
+/**
+ * Calculates the savings rate safely, handling division by zero.
+ * Returns a decimal ratio (e.g. 0.15 for 15%).
+ */
+export function calculateSavingsRate(income: number, expenses: number): number {
+  if (income <= 0) return 0;
+  const savings = income - expenses;
+  return savings / income;
+}
+
+/**
+ * Sums the monthly equivalents of active recurring items marked as cancel candidates.
+ */
+export function totalMonthlyCancelCandidates(items: RecurringItemRecord[]): number {
+  return items
+    .filter((item) => item.active && item.kind === "expense" && item.necessity === "cancel_candidate")
+    .reduce((sum, item) => sum + monthlyEquivalentMinor(item), 0);
+}
+
+/**
+ * Sums the yearly equivalents of active recurring items marked as cancel candidates.
+ */
+export function totalYearlyCancelCandidates(items: RecurringItemRecord[]): number {
+  return items
+    .filter((item) => item.active && item.kind === "expense" && item.necessity === "cancel_candidate")
+    .reduce((sum, item) => sum + yearlyEquivalentMinor(item), 0);
+}
+
+export interface BudgetHealthSummary {
+  plannedTotal: number;
+  actualTotal: number;
+  remainingTotal: number;
+  overspentCount: number;
+}
+
+/**
+ * Computes budget health statistics for a given month.
+ */
+export function calculateBudgetHealth(
+  budgetEnvelopes: BudgetEnvelopeRecord[],
+  transactions: TransactionRecord[],
+  monthStr: string
+): BudgetHealthSummary {
+  const activeEnvelopes = budgetEnvelopes.filter((e) => e.month === monthStr && !e.archived);
+  const actualsMap = transactionTotalsByCategoryForMonth(transactions, monthStr);
+
+  let plannedTotal = 0;
+  let actualTotal = 0;
+  let remainingTotal = 0;
+  let overspentCount = 0;
+
+  activeEnvelopes.forEach((e) => {
+    const planned = e.plannedAmountMinor;
+    const actual = actualsMap[e.categoryId] || 0;
+    const rollover = e.rolloverEnabled
+      ? calculateEnvelopeRollover(budgetEnvelopes, transactions, monthStr, e.categoryId)
+      : 0;
+    const remaining = planned + rollover - actual;
+
+    plannedTotal += planned;
+    actualTotal += actual;
+    remainingTotal += remaining;
+    if (remaining < 0) {
+      overspentCount++;
+    }
+  });
+
+  return {
+    plannedTotal,
+    actualTotal,
+    remainingTotal,
+    overspentCount
+  };
+}

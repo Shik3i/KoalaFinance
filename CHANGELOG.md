@@ -2,6 +2,20 @@
 
 All notable changes to KoalaFinance will be documented in this file.
 
+## [0.5.0] - 2026-06-24
+
+### Added
+- **Client-Side Financial Dashboard & Reports (Phase 6E)**:
+  - Monthly overview metrics summarizing Actual Income, Actual Expenses, Net Savings, and Savings Rate.
+  - Interactive top spending categories list with visual CSS horizontal progress bars using category colors.
+  - Envelope budget health panel aggregating total planned, spent, remaining limits, and overspent categories count.
+  - Monthly commitments summary displaying estimated recurring inflow vs outflow.
+  - Optimization section calculating potential monthly/yearly savings from recurring items marked as cancel candidates, with candidate listings.
+  - Localized month picker to switch reports data instantly in-memory.
+  - Zero-knowledge data isolation: all reports and charts are computed in browser from decrypted in-memory store states; no data is ever transmitted to the server.
+  - Integrated Svelte navigation button at the top of the sidebar with vault unlock redirect triggers.
+  - Expanded unit test coverage in `finance.test.ts` verifying calculation safety boundaries, zero-income saving rates, transfer/archived exclusions, and security static audits.
+
 ## [0.4.0] - 2026-06-24
 
 ### Added

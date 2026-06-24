@@ -33,7 +33,13 @@ import {
   totalYearlyRecurringExpenses,
   transactionTotalsByCategoryForMonth,
   budgetPlannedVsActualForMonth,
-  calculateEnvelopeRollover
+  calculateEnvelopeRollover,
+  totalActualIncomeForMonth,
+  totalActualExpensesForMonth,
+  calculateSavingsRate,
+  totalMonthlyCancelCandidates,
+  totalYearlyCancelCandidates,
+  calculateBudgetHealth
 } from "./calculations";
 import { toEncryptedRecordInput, fromEncryptedRecord } from "./records";
 import type {
@@ -1304,6 +1310,123 @@ describe("Finance Domain Model & Helpers", () => {
         const totalPlannedEnvelopes = 250000;
         const unallocated = estimatedIncome - totalPlannedEnvelopes;
         expect(unallocated).toBe(50000);
+      });
+
+      describe("Dashboard Calculations & Reports Helpers", () => {
+        it("should calculate correct monthly actual income and ignore archived/transfers", () => {
+          const txs: TransactionRecord[] = [
+            {
+              schemaVersion: 1, id: "tx1", date: "2026-06-01", type: "income", totalAmountMinor: 150000, currency: "EUR",
+              splits: [{ id: "sp1", categoryId: "salary", amountMinor: 150000 }], archived: false, createdAt: "", updatedAt: ""
+            },
+            {
+              schemaVersion: 1, id: "tx2", date: "2026-06-15", type: "income", totalAmountMinor: 50000, currency: "EUR",
+              splits: [{ id: "sp2", categoryId: "gift", amountMinor: 50000 }], archived: true, createdAt: "", updatedAt: "" // Archived
+            },
+            {
+              schemaVersion: 1, id: "tx3", date: "2026-06-20", type: "transfer", totalAmountMinor: 30000, currency: "EUR",
+              splits: [], accountId: "acc1", destinationAccountId: "acc2", archived: false, createdAt: "", updatedAt: "" // Transfer
+            },
+            {
+              schemaVersion: 1, id: "tx4", date: "2026-07-01", type: "income", totalAmountMinor: 100000, currency: "EUR",
+              splits: [{ id: "sp3", categoryId: "salary", amountMinor: 100000 }], archived: false, createdAt: "", updatedAt: "" // Next month
+            }
+          ];
+
+          const income = totalActualIncomeForMonth(txs, "2026-06");
+          expect(income).toBe(150000);
+        });
+
+        it("should calculate correct monthly actual expenses and ignore archived/transfers/income", () => {
+          const txs: TransactionRecord[] = [
+            {
+              schemaVersion: 1, id: "tx1", date: "2026-06-05", type: "expense", totalAmountMinor: 60000, currency: "EUR",
+              splits: [{ id: "sp1", categoryId: "rent", amountMinor: 60000 }], archived: false, createdAt: "", updatedAt: ""
+            },
+            {
+              schemaVersion: 1, id: "tx2", date: "2026-06-10", type: "expense", totalAmountMinor: 20000, currency: "EUR",
+              splits: [{ id: "sp2", categoryId: "food", amountMinor: 20000 }], archived: true, createdAt: "", updatedAt: "" // Archived
+            },
+            {
+              schemaVersion: 1, id: "tx3", date: "2026-06-15", type: "transfer", totalAmountMinor: 10000, currency: "EUR",
+              splits: [], accountId: "acc1", destinationAccountId: "acc2", archived: false, createdAt: "", updatedAt: "" // Transfer
+            },
+            {
+              schemaVersion: 1, id: "tx4", date: "2026-06-20", type: "income", totalAmountMinor: 50000, currency: "EUR",
+              splits: [{ id: "sp3", categoryId: "refund", amountMinor: 50000 }], archived: false, createdAt: "", updatedAt: "" // Income
+            }
+          ];
+
+          const expenses = totalActualExpensesForMonth(txs, "2026-06");
+          expect(expenses).toBe(60000);
+        });
+
+        it("should calculate savings rate and handle zero income safely", () => {
+          expect(calculateSavingsRate(1000, 400)).toBe(0.6); // 60% savings rate
+          expect(calculateSavingsRate(0, 500)).toBe(0);
+          expect(calculateSavingsRate(-100, 200)).toBe(0);
+        });
+
+        it("should compute correct cancel candidates savings totals", () => {
+          const items: RecurringItemRecord[] = [
+            {
+              schemaVersion: 1, id: "r1", name: "Gym", kind: "expense", amountMinor: 5000, currency: "EUR",
+              interval: "monthly", categoryId: "leisure", necessity: "cancel_candidate", active: true, createdAt: "", updatedAt: "", archived: false
+            },
+            {
+              schemaVersion: 1, id: "r2", name: "Streaming", kind: "expense", amountMinor: 12000, currency: "EUR",
+              interval: "yearly", categoryId: "leisure", necessity: "cancel_candidate", active: true, createdAt: "", updatedAt: "", archived: false
+            },
+            {
+              schemaVersion: 1, id: "r3", name: "Rent", kind: "expense", amountMinor: 100000, currency: "EUR",
+              interval: "monthly", categoryId: "housing", necessity: "essential", active: true, createdAt: "", updatedAt: "", archived: false // Essential
+            },
+            {
+              schemaVersion: 1, id: "r4", name: "Domain", kind: "expense", amountMinor: 2000, currency: "EUR",
+              interval: "yearly", categoryId: "tech", necessity: "cancel_candidate", active: false, createdAt: "", updatedAt: "", archived: false // Inactive
+            }
+          ];
+
+          const monthlySavings = totalMonthlyCancelCandidates(items);
+          expect(monthlySavings).toBe(6000); // 5000 (monthly) + 12000/12 (yearly equivalent) = 6000
+
+          const yearlySavings = totalYearlyCancelCandidates(items);
+          expect(yearlySavings).toBe(72000); // 5000 * 12 (monthly equivalent) + 12000 (yearly) = 72000
+        });
+
+        it("should compute correct budget health summary including overspent counts", () => {
+          const envelopes: BudgetEnvelopeRecord[] = [
+            {
+              schemaVersion: 1, id: "env1", month: "2026-06", categoryId: "groceries", plannedAmountMinor: 10000,
+              rolloverEnabled: false, archived: false, createdAt: "", updatedAt: ""
+            },
+            {
+              schemaVersion: 1, id: "env2", month: "2026-06", categoryId: "utilities", plannedAmountMinor: 5000,
+              rolloverEnabled: false, archived: false, createdAt: "", updatedAt: ""
+            },
+            {
+              schemaVersion: 1, id: "env3", month: "2026-06", categoryId: "leisure", plannedAmountMinor: 2000,
+              rolloverEnabled: false, archived: true, createdAt: "", updatedAt: "" // Archived
+            }
+          ];
+
+          const txs: TransactionRecord[] = [
+            {
+              schemaVersion: 1, id: "t1", date: "2026-06-10", type: "expense", totalAmountMinor: 8000, currency: "EUR",
+              splits: [{ id: "sp1", categoryId: "groceries", amountMinor: 8000 }], archived: false, createdAt: "", updatedAt: ""
+            },
+            {
+              schemaVersion: 1, id: "t2", date: "2026-06-15", type: "expense", totalAmountMinor: 7000, currency: "EUR",
+              splits: [{ id: "sp2", categoryId: "utilities", amountMinor: 7000 }], archived: false, createdAt: "", updatedAt: "" // Overspent
+            }
+          ];
+
+          const health = calculateBudgetHealth(envelopes, txs, "2026-06");
+          expect(health.plannedTotal).toBe(15000); // 10000 + 5000
+          expect(health.actualTotal).toBe(15000); // 8000 + 7000
+          expect(health.remainingTotal).toBe(0); // (10000 - 8000) + (5000 - 7000) = 2000 - 2000 = 0
+          expect(health.overspentCount).toBe(1); // utilities is overspent
+        });
       });
     });
 

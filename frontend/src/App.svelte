@@ -32,6 +32,7 @@
     successfullyDecryptedCount,
     skippedRecordsCount
   } from './lib/finance/store';
+  import DashboardView from './lib/components/finance/DashboardView.svelte';
   import AccountsView from './lib/components/finance/AccountsView.svelte';
   import CategoriesView from './lib/components/finance/CategoriesView.svelte';
   import RecurringItemsView from './lib/components/finance/RecurringItemsView.svelte';
@@ -581,6 +582,9 @@
       activeVaultKey = await unwrapVaultKey(vault.encrypted_vault_key, decryptedPrivateKey);
       await fetchAndDecryptRecords();
       await setVault(selectedVaultId, activeVaultKey);
+      if (activeTab === 'vaults') {
+        activeTab = 'dashboard';
+      }
     } catch (err) {
       console.error('Failed to unwrap vault key.', err);
     }
@@ -919,7 +923,7 @@
           </div>
         {/if}
 
-        {#if ['accounts', 'categories', 'recurring', 'subscriptions', 'transactions', 'budgets'].includes(activeTab) && !activeVaultKey}
+        {#if ['dashboard', 'accounts', 'categories', 'recurring', 'subscriptions', 'transactions', 'budgets'].includes(activeTab) && !activeVaultKey}
           <div class="locked-finance-view">
             <div class="locked-card">
               <span class="lock-icon">🔒</span>
@@ -1045,6 +1049,8 @@
               </div>
             </div>
           </div>
+        {:else if activeTab === 'dashboard'}
+          <DashboardView />
         {:else if activeTab === 'accounts'}
           <AccountsView {csrfToken} />
         {:else if activeTab === 'categories'}

@@ -25,6 +25,14 @@
 
   <nav class="menu">
     <button
+      class="menu-item {activeTab === 'dashboard' ? 'active' : ''}"
+      on:click={() => onChangeTab('dashboard')}
+    >
+      <span class="icon">📊</span>
+      <span class="label">Dashboard</span>
+    </button>
+
+    <button
       class="menu-item {activeTab === 'vaults' ? 'active' : ''}"
       on:click={() => onChangeTab('vaults')}
     >
