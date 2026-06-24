@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    accounts,
     transactions,
     budgets,
     recurringItems,
@@ -18,6 +19,8 @@
     calculateBudgetHealth,
     transactionTotalsByCategoryForMonth
   } from "../../finance/calculations";
+
+  export let onChangeTab: (tab: string) => void = () => {};
 
   // Select month (default to current YYYY-MM)
   let selectedMonth = new Date().toISOString().substring(0, 7);
@@ -91,10 +94,70 @@
       <p>Decrypting vault records and compiling report...</p>
     </div>
   {:else if !hasData}
-    <div class="empty-state">
-      <span class="icon">📈</span>
-      <h3>No financial data for {selectedMonth}</h3>
-      <p>Record transactions or define monthly budget envelopes for this month to see reports.</p>
+    <div class="onboarding-guide">
+      <div class="onboarding-header">
+        <span class="onboarding-logo">🐨</span>
+        <h3>Welcome to your Vault!</h3>
+        <p>Follow these steps to set up your financial workspace:</p>
+      </div>
+
+      <div class="steps-checklist">
+        <div class="step-card {$accounts.length > 0 ? 'completed' : ''}">
+          <div class="step-status">
+            {#if $accounts.length > 0}
+              <span class="status-icon success">✓</span>
+            {:else}
+              <span class="status-number">1</span>
+            {/if}
+          </div>
+          <div class="step-info">
+            <h4>Create a Financial Account</h4>
+            <p>Add bank accounts, credit cards, or cash wallets to track their balances.</p>
+            {#if $accounts.length === 0}
+              <button class="step-action-btn" on:click={() => onChangeTab('accounts')}>Go to Accounts</button>
+            {/if}
+          </div>
+        </div>
+
+        <div class="step-card {$transactions.length > 0 ? 'completed' : ''}">
+          <div class="step-status">
+            {#if $transactions.length > 0}
+              <span class="status-icon success">✓</span>
+            {:else}
+              <span class="status-number">2</span>
+            {/if}
+          </div>
+          <div class="step-info">
+            <h4>Record your first Transaction</h4>
+            <p>Record your income, expenses, or transfers between accounts. You can also split expenses across multiple categories!</p>
+            {#if $transactions.length === 0}
+              <button class="step-action-btn" on:click={() => onChangeTab('transactions')} disabled={$accounts.length === 0}>
+                Go to Transactions
+              </button>
+              {#if $accounts.length === 0}
+                <span class="action-tip">Requires an active account</span>
+              {/if}
+            {/if}
+          </div>
+        </div>
+
+        <div class="step-card {$budgets.length > 0 ? 'completed' : ''}">
+          <div class="step-status">
+            {#if $budgets.length > 0}
+              <span class="status-icon success">✓</span>
+            {:else}
+              <span class="status-number">3</span>
+            {/if}
+          </div>
+          <div class="step-info">
+            <h4>Define Monthly Budgets</h4>
+            <p>Allocate spending limits for your expense categories (envelope budgeting) to track planned vs. actual limits.</p>
+            {#if $budgets.length === 0}
+              <button class="step-action-btn" on:click={() => onChangeTab('budgets')}>Go to Budgets</button>
+            {/if}
+          </div>
+        </div>
+      </div>
     </div>
   {:else}
     <!-- Top-Level Metrics Grid -->
@@ -770,8 +833,7 @@
   }
 
   /* Empty / Loading States */
-  .loading-state,
-  .empty-state {
+  .loading-state {
     background-color: #161b22;
     border: 1px solid #30363d;
     border-radius: 8px;
@@ -784,21 +846,145 @@
     gap: 0.75rem;
   }
 
-  .empty-state .icon {
-    font-size: 2.5rem;
+  /* Onboarding Guide */
+  .onboarding-guide {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 2.5rem 2rem;
+    max-width: 700px;
+    margin: 2rem auto;
+    box-sizing: border-box;
   }
 
-  .empty-state h3 {
-    margin: 0;
-    color: #f0f6fc;
-    font-size: 1.2rem;
+  .onboarding-header {
+    text-align: center;
+    margin-bottom: 2rem;
   }
 
-  .empty-state p {
+  .onboarding-logo {
+    font-size: 3rem;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .onboarding-header h3 {
     margin: 0 0 0.5rem 0;
+    color: #f0f6fc;
+    font-size: 1.4rem;
+  }
+
+  .onboarding-header p {
+    margin: 0;
     color: #8b949e;
+    font-size: 0.95rem;
+  }
+
+  .steps-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .step-card {
+    background-color: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1.25rem;
+    display: flex;
+    gap: 1.25rem;
+    align-items: flex-start;
+    transition: all 0.2s ease;
+  }
+
+  .step-card.completed {
+    border-color: rgba(46, 160, 67, 0.4);
+    background-color: rgba(46, 160, 67, 0.02);
+  }
+
+  .step-status {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
     font-size: 0.9rem;
-    max-width: 340px;
+    font-weight: bold;
+  }
+
+  .step-card:not(.completed) .step-status {
+    background-color: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+  }
+
+  .step-status .status-icon.success {
+    background-color: #238636;
+    color: #ffffff;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .step-info {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .step-info h4 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: #f0f6fc;
+  }
+
+  .step-card.completed .step-info h4 {
+    text-decoration: line-through;
+    color: #8b949e;
+  }
+
+  .step-info p {
+    margin: 0;
+    font-size: 0.88rem;
+    color: #8b949e;
+    line-height: 1.4;
+  }
+
+  .step-action-btn {
+    align-self: flex-start;
+    background-color: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 0.4rem;
+    transition: all 0.15s ease;
+  }
+
+  .step-action-btn:hover:not(:disabled) {
+    background-color: #30363d;
+    color: #f0f6fc;
+    border-color: #8b949e;
+  }
+
+  .step-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .action-tip {
+    font-size: 0.75rem;
+    color: #f85149;
+    margin-top: 0.25rem;
   }
 
   .spinner {

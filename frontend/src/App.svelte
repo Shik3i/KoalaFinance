@@ -1286,7 +1286,7 @@
             </div>
           </div>
         {:else if activeTab === 'dashboard'}
-          <DashboardView />
+          <DashboardView onChangeTab={changeTab} />
         {:else if activeTab === 'accounts'}
           <AccountsView {csrfToken} />
         {:else if activeTab === 'categories'}
@@ -2097,6 +2097,10 @@
       flex-direction: column;
       align-items: flex-start;
       gap: 1rem;
+    }
+    .vaults-layout {
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
     }
   }
 </style>

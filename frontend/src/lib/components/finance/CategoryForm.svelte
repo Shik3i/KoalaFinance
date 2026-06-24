@@ -174,6 +174,8 @@
     border-radius: 12px;
     width: 100%;
     max-width: 450px;
+    max-height: 90vh;
+    overflow-y: auto;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     padding: 1.5rem;
     box-sizing: border-box;

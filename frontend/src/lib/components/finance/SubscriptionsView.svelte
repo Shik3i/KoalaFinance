@@ -374,7 +374,7 @@
     background-color: #161b22;
     border: 1px solid #30363d;
     border-radius: 12px;
-    overflow: hidden;
+    overflow-x: auto;
   }
 
   .finance-table {
