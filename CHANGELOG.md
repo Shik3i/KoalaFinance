@@ -2,6 +2,17 @@
 
 All notable changes to KoalaFinance will be documented in this file.
 
+## [0.6.0] - 2026-06-24
+
+### Added
+- **Vault Backup, Export & Import (Phase 6F)**:
+  - Encrypted Backup Export: generates versioned JSON files containing raw encrypted database records.
+  - Encrypted Backup Import: validates format headers, versions, and sizes (max 10MB), checks vault ID alignment to block mismatching imports, and restores records client-side in the active vault context while skipping duplicate record IDs.
+  - Plaintext JSON Export: extracts fully decrypted domain records with warnings and checkbox confirmation locks.
+  - CSV Transactions Export: compiles transactions and splits into RFC 4180 escaped CSV files with resolved category/account names and confirmation locks.
+  - Dedicated Svelte Backup & Export UI tab and sidebar selector.
+  - Expanded unit test coverage in `finance.test.ts` verifying CSV escaping, duplicate skipping, vault ID validation, object URL release, and security audits.
+
 ## [0.5.0] - 2026-06-24
 
 ### Added

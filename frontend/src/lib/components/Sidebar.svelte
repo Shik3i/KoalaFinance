@@ -88,6 +88,14 @@
       <span class="label">Subscriptions</span>
     </button>
 
+    <button
+      class="menu-item {activeTab === 'backup' ? 'active' : ''}"
+      on:click={() => onChangeTab('backup')}
+    >
+      <span class="icon">💾</span>
+      <span class="label">Backup & Export</span>
+    </button>
+
     {#if currentUser && currentUser.role === 'admin'}
       <button
         class="menu-item {activeTab === 'admin' ? 'active' : ''}"

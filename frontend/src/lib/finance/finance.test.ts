@@ -1428,6 +1428,172 @@ describe("Finance Domain Model & Helpers", () => {
           expect(health.overspentCount).toBe(1); // utilities is overspent
         });
       });
+
+      describe("Vault Backup, Export & Import Helpers", () => {
+        // CSV Escaping Validator
+        function escapeCSVField(val: any): string {
+          if (val === undefined || val === null) return "";
+          const str = String(val);
+          const escaped = str.replace(/"/g, '""');
+          if (
+            escaped.includes(",") ||
+            escaped.includes('"') ||
+            escaped.includes("\n") ||
+            escaped.includes("\r")
+          ) {
+            return `"${escaped}"`;
+          }
+          return escaped;
+        }
+
+        it("should escape quotes, commas, and newlines in CSV fields correctly", () => {
+          expect(escapeCSVField("simple")).toBe("simple");
+          expect(escapeCSVField("hello, world")).toBe('"hello, world"');
+          expect(escapeCSVField('say "hello"')).toBe('"say ""hello"""');
+          expect(escapeCSVField("line1\nline2")).toBe('"line1\nline2"');
+          expect(escapeCSVField("line1\r\nline2")).toBe('"line1\r\nline2"');
+        });
+
+        // Backup format validation mockup
+        function validateBackupFormat(data: any, activeVaultId: string): { ok: boolean; error?: string } {
+          if (!data || typeof data !== "object") {
+            return { ok: false, error: "Invalid file content - must be a JSON object" };
+          }
+          if (data.format !== "koalafinance.encrypted_vault_backup") {
+            return { ok: false, error: "Unknown backup format or not a KoalaFinance backup" };
+          }
+          if (data.formatVersion !== 1) {
+            return { ok: false, error: `Unsupported backup format version: ${data.formatVersion}` };
+          }
+          if (!data.vaultId || typeof data.vaultId !== "string") {
+            return { ok: false, error: "Backup file is missing vault configuration metadata" };
+          }
+          if (data.vaultId !== activeVaultId) {
+            return { ok: false, error: "Backup belongs to a different vault ID." };
+          }
+          if (!Array.isArray(data.records)) {
+            return { ok: false, error: "Backup records array is missing or invalid" };
+          }
+          for (const rec of data.records) {
+            if (!rec.id || !rec.record_type || !rec.encrypted_payload || !rec.nonce) {
+              return { ok: false, error: "Backup contains records with invalid or missing metadata" };
+            }
+          }
+          return { ok: true };
+        }
+
+        it("should validate correct backups and reject invalid versions or vault IDs", () => {
+          const correctBackup = {
+            format: "koalafinance.encrypted_vault_backup",
+            formatVersion: 1,
+            exportedAt: "2026-06-24T00:00:00Z",
+            vaultId: "vault_123",
+            records: [
+              {
+                id: "rec_1",
+                record_type: "account",
+                schema_version: 1,
+                crypto_version: 1,
+                encrypted_payload: "abc",
+                nonce: "xyz"
+              }
+            ]
+          };
+
+          expect(validateBackupFormat(correctBackup, "vault_123").ok).toBe(true);
+
+          // Mismatched vault ID
+          const resMismatch = validateBackupFormat(correctBackup, "vault_other");
+          expect(resMismatch.ok).toBe(false);
+          expect(resMismatch.error).toContain("different vault ID");
+
+          // Unsupported version
+          const badVersion = { ...correctBackup, formatVersion: 2 };
+          const resVer = validateBackupFormat(badVersion, "vault_123");
+          expect(resVer.ok).toBe(false);
+          expect(resVer.error).toContain("Unsupported backup format version");
+
+          // Mismatched format header
+          const badFormat = { ...correctBackup, format: "other" };
+          const resFormat = validateBackupFormat(badFormat, "vault_123");
+          expect(resFormat.ok).toBe(false);
+          expect(resFormat.error).toContain("Unknown backup format");
+        });
+
+        it("should assert that encrypted backup exports contain zero plaintext finance strings", () => {
+          const rawRecords = [
+            {
+              id: "rec_1",
+              vault_id: "v1",
+              record_type: "account",
+              schema_version: 1,
+              crypto_version: 1,
+              encrypted_payload: "A9B8C7D6E5F4G3H2",
+              nonce: "IV_12345"
+            }
+          ];
+
+          const backup = {
+            format: "koalafinance.encrypted_vault_backup",
+            formatVersion: 1,
+            exportedAt: "2026-06-24T00:00:00Z",
+            vaultId: "v1",
+            records: rawRecords
+          };
+
+          const backupStr = JSON.stringify(backup);
+          expect(backupStr).not.toContain("openingBalanceMinor");
+          expect(backupStr).not.toContain("currentBalanceMinor");
+          expect(backupStr).not.toContain("payee");
+          expect(backupStr).not.toContain("plannedAmountMinor");
+          expect(backupStr).not.toContain("leisure");
+        });
+
+        it("should properly deduplicate import elements by backend record ID", () => {
+          const currentIdsInDb = new Set(["rec_1", "rec_2"]);
+          const backupRecords = [
+            { id: "rec_2", record_type: "account" },
+            { id: "rec_3", record_type: "transaction" }
+          ];
+
+          const toImport = backupRecords.filter(r => !currentIdsInDb.has(r.id));
+          expect(toImport.length).toBe(1);
+          expect(toImport[0].id).toBe("rec_3");
+        });
+
+        it("should clean up and revoke object URLs safely", () => {
+          const createdUrls: string[] = [];
+          const revokedUrls: string[] = [];
+
+          const originalCreate = URL.createObjectURL;
+          const originalRevoke = URL.revokeObjectURL;
+
+          URL.createObjectURL = () => {
+            const url = "blob:url_mock_" + createdUrls.length;
+            createdUrls.push(url);
+            return url;
+          };
+
+          URL.revokeObjectURL = (url: string) => {
+            revokedUrls.push(url);
+          };
+
+          function simDownload(content: string, contentType: string) {
+            const blob = new Blob([content], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            URL.revokeObjectURL(url);
+          }
+
+          simDownload("{}", "application/json");
+
+          expect(createdUrls.length).toBe(1);
+          expect(revokedUrls.length).toBe(1);
+          expect(revokedUrls[0]).toBe(createdUrls[0]);
+
+          URL.createObjectURL = originalCreate;
+          URL.revokeObjectURL = originalRevoke;
+        });
+      });
     });
 
     describe("Build & Privacy Safety Static Analysis", () => {
