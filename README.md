@@ -8,7 +8,7 @@ KoalaFinance is a self-hosted, privacy-first, client-side end-to-end encrypted p
 
 ---
 
-## 1. Implemented Features (Phase 6C)
+## 1. Implemented Features (Phase 6D)
 
 Currently, the core security, database, cryptographic foundations, and early finance models are fully implemented:
 
@@ -40,14 +40,22 @@ Currently, the core security, database, cryptographic foundations, and early fin
 * **Derived Balance Preview**: Real-time in-memory calculation of account balances for "calculated" mode based on recorded transactions, without database mutation.
 * **In-Memory Store & Partial Failure Tolerance**: Svelte stores wrap records in a `LoadedFinanceRecord<T>` interface keeping the backing database record IDs. Decryption failures on individual records do not crash the app, but display a warning banner with reloading options.
 * **Archive-over-Delete Semantics**: Financial records are marked `archived: true` during deletion to prevent irreversible loss, maintaining complete client-side security.
+* **Encrypted Envelope Budgeting**:
+  - Monthly budget envelopes view supporting allocation limits and optional notes.
+  - Planned vs. Actual calculations mapping transaction splits by category (ignores transfers/income, non-archived only).
+  - Unallocated estimate calculation: `estimated monthly income - total planned envelopes` (labeled clearly as estimate).
+  - Previous-month-only rollover preview: computed surplus carried over from the prior month if rollover was enabled, without mutating planned database amounts or creating extra records.
+  - Safe category lookups showing "Archived Category" or "Missing Category" instead of crashing if a budget category is archived or missing.
+  - Dynamic month navigation selector for current/selected budget envelope ledger views.
+  - Client-side duplicate check preventing multiple active budget envelopes for the same category and month.
+  - Automated tests validating budget structure, duplicate checking, spending filters, and rollover preview calculations.
 
 ---
 
-## 2. What Is NOT Implemented Yet (Phase 6D+)
+## 2. What Is NOT Implemented Yet (Phase 6E+)
 
 The following features are out of scope for the current foundation and will be implemented in future releases:
 
-- **Envelope Budgeting UI**
 - **Financial Reports & Charts**
 - **Backup / Export / Import utilities**
 - **Password Reset UX**

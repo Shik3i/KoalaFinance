@@ -93,6 +93,7 @@ export interface BudgetEnvelopeRecord {
   plannedAmountMinor: number; // Non-negative money amount
   rolloverEnabled: boolean;
   note?: string;
+  archived: boolean;
   createdAt: string; // ISO Timestamp
   updatedAt: string; // ISO Timestamp
 }

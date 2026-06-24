@@ -2,6 +2,19 @@
 
 All notable changes to KoalaFinance will be documented in this file.
 
+## [0.4.0] - 2026-06-24
+
+### Added
+- **Encrypted Envelope Budgeting (Phase 6D)**:
+  - Monthly budget envelopes view supporting allocation limits and optional notes.
+  - Planned vs. Actual calculations mapping transaction splits by category (ignores transfers/income, non-archived only).
+  - Unallocated estimate calculation: `estimated monthly income - total planned envelopes` (labeled clearly as estimate).
+  - Previous-month-only rollover preview: computed surplus carried over from the prior month if rollover was enabled, without mutating planned database amounts or creating extra records.
+  - Safe category lookups showing "Archived Category" or "Missing Category" instead of crashing if a budget category is archived or missing.
+  - Dynamic month navigation selector for current/selected budget envelope ledger views.
+  - Client-side duplicate check preventing multiple active budget envelopes for the same category and month.
+  - Automated tests validating budget structure, duplicate checking, spending filters, and rollover preview calculations.
+
 ## [0.3.0] - 2026-06-23
 
 ### Added

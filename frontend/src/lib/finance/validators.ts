@@ -391,6 +391,10 @@ export function validateBudgetEnvelope(payload: any): ValidationResult {
     }
   }
 
+  if (typeof payload.archived !== "boolean") {
+    errors.push(makeError("archived", "invalid_type", "archived must be a boolean"));
+  }
+
   if (!isValidTimestamp(payload.createdAt)) {
     errors.push(makeError("createdAt", "invalid_timestamp", "createdAt must be a valid ISO timestamp"));
   }

@@ -70,6 +70,7 @@ export function totalYearlyRecurringExpenses(items: RecurringItemRecord[]): numb
 
 /**
  * Aggregates transaction split totals by categoryId for a given month (YYYY-MM).
+ * Enforces expense-only, non-archived transaction splits mapping.
  */
 export function transactionTotalsByCategoryForMonth(
   transactions: TransactionRecord[],
@@ -78,8 +79,8 @@ export function transactionTotalsByCategoryForMonth(
   const totals: Record<string, number> = {};
 
   transactions.forEach((tx) => {
-    // Check if transaction matches plain date prefix YYYY-MM
-    if (tx.date && tx.date.startsWith(monthStr)) {
+    // Only count non-archived expense transactions
+    if (!tx.archived && tx.type === "expense" && tx.date && tx.date.startsWith(monthStr)) {
       tx.splits.forEach((split) => {
         const catId = split.categoryId;
         totals[catId] = (totals[catId] || 0) + split.amountMinor;
@@ -107,9 +108,9 @@ export function budgetPlannedVsActualForMonth(
   const actuals = transactionTotalsByCategoryForMonth(transactions, monthStr);
   const categories = new Set<string>();
 
-  // Collect all category IDs present in either budget envelopes or actuals
+  // Collect all category IDs present in either active budget envelopes or actuals
   budgetEnvelopes.forEach((env) => {
-    if (env.month === monthStr) {
+    if (env.month === monthStr && !env.archived) {
       categories.add(env.categoryId);
     }
   });
@@ -117,7 +118,7 @@ export function budgetPlannedVsActualForMonth(
 
   const comparisons: BudgetComparison[] = [];
   categories.forEach((catId) => {
-    const envelope = budgetEnvelopes.find((env) => env.month === monthStr && env.categoryId === catId);
+    const envelope = budgetEnvelopes.find((env) => env.month === monthStr && env.categoryId === catId && !env.archived);
     const planned = envelope ? envelope.plannedAmountMinor : 0;
     const actual = actuals[catId] || 0;
 
@@ -129,4 +130,43 @@ export function budgetPlannedVsActualForMonth(
   });
 
   return comparisons;
+}
+
+/**
+ * Returns the previous month string in YYYY-MM format.
+ */
+export function getPreviousMonthStr(monthStr: string): string {
+  const parts = monthStr.split("-");
+  if (parts.length !== 2) return "";
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  if (isNaN(year) || isNaN(month)) return "";
+  if (month === 1) {
+    return `${year - 1}-12`;
+  }
+  return `${year}-${String(month - 1).padStart(2, "0")}`;
+}
+
+/**
+ * Computes previous-month-only rollover preview amount for a category.
+ * If previous month has a positive remaining balance (planned - actual), return it. Otherwise 0.
+ */
+export function calculateEnvelopeRollover(
+  budgetEnvelopes: BudgetEnvelopeRecord[],
+  transactions: TransactionRecord[],
+  monthStr: string,
+  categoryId: string
+): number {
+  const prevMonth = getPreviousMonthStr(monthStr);
+  const prevEnvelope = budgetEnvelopes.find(
+    (e) => e.month === prevMonth && e.categoryId === categoryId && !e.archived
+  );
+  if (!prevEnvelope) return 0;
+
+  const prevPlanned = prevEnvelope.plannedAmountMinor;
+  const prevActuals = transactionTotalsByCategoryForMonth(transactions, prevMonth);
+  const prevActual = prevActuals[categoryId] || 0;
+
+  const prevRemaining = prevPlanned - prevActual;
+  return prevRemaining > 0 ? prevRemaining : 0;
 }

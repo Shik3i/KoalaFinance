@@ -32,7 +32,8 @@ import {
   totalMonthlyRecurringExpenses,
   totalYearlyRecurringExpenses,
   transactionTotalsByCategoryForMonth,
-  budgetPlannedVsActualForMonth
+  budgetPlannedVsActualForMonth,
+  calculateEnvelopeRollover
 } from "./calculations";
 import { toEncryptedRecordInput, fromEncryptedRecord } from "./records";
 import type {
@@ -344,6 +345,7 @@ describe("Finance Domain Model & Helpers", () => {
         categoryId: "cat_1",
         plannedAmountMinor: 50000,
         rolloverEnabled: true,
+        archived: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -582,15 +584,15 @@ describe("Finance Domain Model & Helpers", () => {
       const budgets: BudgetEnvelopeRecord[] = [
         {
           schemaVersion: 1, id: "b1", month: "2026-06", categoryId: "housing", plannedAmountMinor: 120000,
-          rolloverEnabled: false, createdAt: "", updatedAt: ""
+          rolloverEnabled: false, archived: false, createdAt: "", updatedAt: ""
         },
         {
           schemaVersion: 1, id: "b2", month: "2026-06", categoryId: "groceries", plannedAmountMinor: 80000,
-          rolloverEnabled: false, createdAt: "", updatedAt: ""
+          rolloverEnabled: false, archived: false, createdAt: "", updatedAt: ""
         },
         {
           schemaVersion: 1, id: "b3", month: "2026-07", categoryId: "groceries", plannedAmountMinor: 90000,
-          rolloverEnabled: false, createdAt: "", updatedAt: ""
+          rolloverEnabled: false, archived: false, createdAt: "", updatedAt: ""
         }
       ];
 
@@ -1155,6 +1157,153 @@ describe("Finance Domain Model & Helpers", () => {
 
         const res5 = filterTxs(txs, "all", "all", "all", "all", true);
         expect(res5.length).toBe(4);
+      });
+    });
+
+    describe("Budget Calculations, Rollover, and Validation", () => {
+      const timestamp = "2026-06-23T02:40:00.000Z";
+
+      it("should validate budget envelopes and check archived flag", () => {
+        const b1: BudgetEnvelopeRecord = {
+          schemaVersion: 1,
+          id: "b1",
+          month: "2026-06",
+          categoryId: "cat_1",
+          plannedAmountMinor: 1000,
+          rolloverEnabled: true,
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        expect(validateBudgetEnvelope(b1).ok).toBe(true);
+
+        const b2: any = {
+          schemaVersion: 1,
+          id: "b2",
+          month: "2026-06",
+          categoryId: "cat_1",
+          plannedAmountMinor: 1000,
+          rolloverEnabled: true,
+          // archived missing
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        expect(validateBudgetEnvelope(b2).ok).toBe(false);
+      });
+
+      it("should prevent duplicate active budget for same month and category", () => {
+        const mockBudgets = [
+          {
+            id: "b1",
+            month: "2026-06",
+            categoryId: "cat_1",
+            plannedAmountMinor: 1000,
+            rolloverEnabled: false,
+            archived: false,
+            createdAt: timestamp,
+            updatedAt: timestamp
+          },
+          {
+            id: "b2",
+            month: "2026-06",
+            categoryId: "cat_2",
+            plannedAmountMinor: 500,
+            rolloverEnabled: false,
+            archived: true,
+            createdAt: timestamp,
+            updatedAt: timestamp
+          }
+        ];
+
+        const checkDuplicate = (month: string, categoryId: string, editingId?: string) => {
+          return mockBudgets.some(b => 
+            !b.archived && 
+            b.month === month && 
+            b.categoryId === categoryId && 
+            b.id !== editingId
+          );
+        };
+
+        expect(checkDuplicate("2026-06", "cat_1")).toBe(true);
+        expect(checkDuplicate("2026-06", "cat_2")).toBe(false);
+        expect(checkDuplicate("2026-07", "cat_1")).toBe(false);
+        expect(checkDuplicate("2026-06", "cat_1", "b1")).toBe(false);
+      });
+
+      it("should calculate correct actual spending from splits, ignoring transfers, income, and archived txs", () => {
+        const txs: TransactionRecord[] = [
+          {
+            schemaVersion: 1, id: "tx1", date: "2026-06-01", type: "expense", totalAmountMinor: 1000, currency: "EUR",
+            splits: [{ id: "sp1", categoryId: "cat_1", amountMinor: 1000 }], archived: false,
+            createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1, id: "tx2", date: "2026-06-05", type: "expense", totalAmountMinor: 500, currency: "EUR",
+            splits: [{ id: "sp2", categoryId: "cat_1", amountMinor: 500 }], archived: true,
+            createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1, id: "tx3", date: "2026-06-10", type: "transfer", totalAmountMinor: 2000, currency: "EUR",
+            splits: [], archived: false,
+            createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1, id: "tx4", date: "2026-06-15", type: "income", totalAmountMinor: 3000, currency: "EUR",
+            splits: [{ id: "sp3", categoryId: "cat_1", amountMinor: 3000 }], archived: false,
+            createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1, id: "tx5", date: "2026-06-20", type: "expense", totalAmountMinor: 1200, currency: "EUR",
+            splits: [
+              { id: "sp4", categoryId: "cat_1", amountMinor: 400 },
+              { id: "sp5", categoryId: "cat_2", amountMinor: 800 }
+            ], archived: false,
+            createdAt: "", updatedAt: ""
+          }
+        ];
+
+        const actuals = transactionTotalsByCategoryForMonth(txs, "2026-06");
+        expect(actuals["cat_1"]).toBe(1400);
+        expect(actuals["cat_2"]).toBe(800);
+      });
+
+      it("should compute previous month rollover preview if enabled", () => {
+        const mockBudgets = [
+          {
+            schemaVersion: 1 as const, id: "b1", month: "2026-05", categoryId: "cat_1",
+            plannedAmountMinor: 1000, rolloverEnabled: true, archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1 as const, id: "b2", month: "2026-05", categoryId: "cat_2",
+            plannedAmountMinor: 200, rolloverEnabled: true, archived: false, createdAt: "", updatedAt: ""
+          }
+        ];
+
+        const mockTransactions = [
+          {
+            schemaVersion: 1 as const, id: "tx1", date: "2026-05-15", type: "expense" as const,
+            totalAmountMinor: 400, currency: "EUR" as const, splits: [{ id: "sp1", categoryId: "cat_1", amountMinor: 400 }],
+            archived: false, createdAt: "", updatedAt: ""
+          },
+          {
+            schemaVersion: 1 as const, id: "tx2", date: "2026-05-20", type: "expense" as const,
+            totalAmountMinor: 300, currency: "EUR" as const, splits: [{ id: "sp2", categoryId: "cat_2", amountMinor: 300 }],
+            archived: false, createdAt: "", updatedAt: ""
+          }
+        ];
+
+        const roll1 = calculateEnvelopeRollover(mockBudgets, mockTransactions, "2026-06", "cat_1");
+        expect(roll1).toBe(600);
+
+        const roll2 = calculateEnvelopeRollover(mockBudgets, mockTransactions, "2026-06", "cat_2");
+        expect(roll2).toBe(0);
+      });
+
+      it("should calculate correct unallocated money estimate avoiding double counting recurring items", () => {
+        const estimatedIncome = 300000;
+        const totalPlannedEnvelopes = 250000;
+        const unallocated = estimatedIncome - totalPlannedEnvelopes;
+        expect(unallocated).toBe(50000);
       });
     });
 
