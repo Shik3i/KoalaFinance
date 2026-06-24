@@ -1303,7 +1303,7 @@
           <BackupView {csrfToken} />
         {:else if activeTab === 'admin' && currentUser.role === 'admin'}
           <AdminPanel csrfToken={csrfToken} />
-        {:else if activeTab === 'debug'}
+        {:else if activeTab === 'debug' && currentUser.role === 'admin'}
           <DebugPanel
             currentUser={currentUser}
             decryptedPrivateKey={decryptedPrivateKey}
@@ -2083,5 +2083,20 @@
 
   .warning-reload-btn:hover {
     background-color: rgba(245, 158, 11, 0.25);
+  }
+
+  @media (max-width: 768px) {
+    .dashboard-shell {
+      flex-direction: column;
+    }
+    .dashboard-content {
+      margin-left: 0;
+      padding: 1.5rem;
+    }
+    .view-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1rem;
+    }
   }
 </style>

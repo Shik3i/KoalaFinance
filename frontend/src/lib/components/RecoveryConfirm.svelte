@@ -36,7 +36,9 @@
   </p>
 
   <div class="confirm-input-group">
+    <label for="confirm-recovery-input" class="visually-hidden">Confirm Recovery Key</label>
     <input
+      id="confirm-recovery-input"
       type="text"
       placeholder="Type or paste recovery key here"
       bind:value={userInput}
@@ -220,5 +222,17 @@
     background-color: #21262d;
     color: #8b949e;
     cursor: not-allowed;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

@@ -106,13 +106,15 @@
       </button>
     {/if}
 
-    <button
-      class="menu-item debug-item {activeTab === 'debug' ? 'active' : ''}"
-      on:click={() => onChangeTab('debug')}
-    >
-      <span class="icon">🛠️</span>
-      <span class="label">Developer Panel</span>
-    </button>
+    {#if currentUser && currentUser.role === 'admin'}
+      <button
+        class="menu-item debug-item {activeTab === 'debug' ? 'active' : ''}"
+        on:click={() => onChangeTab('debug')}
+      >
+        <span class="icon">🛠️</span>
+        <span class="label">Developer Panel</span>
+      </button>
+    {/if}
   </nav>
 
   <div class="footer">
@@ -271,5 +273,36 @@
   .logout-btn:hover {
     background-color: #da3637;
     color: #ffffff;
+  }
+
+  @media (max-width: 768px) {
+    .sidebar {
+      position: static;
+      width: 100%;
+      height: auto;
+      border-right: none;
+      border-bottom: 1px solid #30363d;
+      padding: 1rem;
+    }
+    .menu {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .menu-item {
+      width: auto;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+    }
+    .footer {
+      margin-top: 0;
+      width: auto;
+    }
+    .logout-btn {
+      width: auto;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+    }
   }
 </style>

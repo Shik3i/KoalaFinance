@@ -400,6 +400,7 @@
             type="file"
             id="backup-file-input"
             accept=".json"
+            aria-label="Select backup file"
             bind:this={importFileElement}
             on:change={handleFileSelected}
             disabled={importing}
