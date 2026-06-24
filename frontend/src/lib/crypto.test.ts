@@ -155,3 +155,79 @@ describe('Vault Keys and Record Encryption', () => {
     await expect(decryptRecordPayload(envelope, wrongVaultKey)).rejects.toThrow();
   });
 });
+
+describe('Phase 6G: Password Recovery & Rewrap Crypto Loop', () => {
+  it('should normalize and validate recovery key formats correctly', () => {
+    const originalBytes = generateRandomRecoveryBytes();
+    const formatted = encodeBase32(originalBytes); // has dashes, is uppercase
+    
+    // Normalization test
+    const normalized1 = formatted.toLowerCase().replace(/-/g, ' ');
+    const cleaned1 = normalized1.toUpperCase().replace(/[\s-]/g, '');
+    expect(cleaned1.length).toBe(52);
+    expect(/^[A-Z2-7]{52}$/.test(cleaned1)).toBe(true);
+
+    const decoded1 = decodeBase32(normalized1);
+    expect(decoded1).toEqual(originalBytes);
+  });
+
+  it('should simulate challenge decryption, private key rewrapping, and vault unlocking', async () => {
+    // 1. Setup user keypair
+    const keyPair = await generateUserKeyPair();
+    const recoverySalt = new Uint8Array(16);
+    crypto.getRandomValues(recoverySalt);
+
+    const recoveryBytes = generateRandomRecoveryBytes();
+    const recoveryKey = encodeBase32(recoveryBytes);
+
+    // 2. Wrap private key with recovery key
+    const recoveryAesKey = await deriveKeyFromRecoveryKey(recoveryKey, recoverySalt);
+    const recoveryEnvelope = await encryptPrivateKey(keyPair.privateKey, recoveryAesKey, recoverySalt);
+
+    // 3. Simulate challenge: encrypt a challenge string with user's public key
+    const challengeStr = 'test-challenge-12345';
+    const challengeBytes = new TextEncoder().encode(challengeStr);
+    const encryptedChallenge = await crypto.subtle.encrypt(
+      { name: 'RSA-OAEP' },
+      keyPair.publicKey,
+      challengeBytes
+    );
+
+    // 4. Client recovery flow: decrypt private key, then decrypt challenge
+    const derivedRecAesKey = await deriveKeyFromRecoveryKey(recoveryKey, recoverySalt);
+    const decryptedPrivKey = await decryptPrivateKey(recoveryEnvelope, derivedRecAesKey);
+
+    const decryptedChallengeBytes = await crypto.subtle.decrypt(
+      { name: 'RSA-OAEP' },
+      decryptedPrivKey,
+      encryptedChallenge
+    );
+    const decryptedChallenge = new TextDecoder().decode(decryptedChallengeBytes);
+    expect(decryptedChallenge).toBe(challengeStr);
+
+    // 5. Re-wrap private key under new password
+    const newPassword = 'newSecretPassword123';
+    const newPasswordSalt = new Uint8Array(16);
+    crypto.getRandomValues(newPasswordSalt);
+
+    const newPasswordAesKey = await deriveKeyFromPassword(newPassword, newPasswordSalt);
+    const newPasswordEnvelope = await encryptPrivateKey(decryptedPrivKey, newPasswordAesKey, newPasswordSalt);
+
+    // 6. Verify we can decrypt the private key with the new password
+    const finalDerivedKey = await deriveKeyFromPassword(newPassword, newPasswordSalt);
+    const finalPrivKey = await decryptPrivateKey(newPasswordEnvelope, finalDerivedKey);
+    expect(finalPrivKey.type).toBe('private');
+
+    // 7. Verify we can unlock a vault key with the final decrypted private key
+    const vaultKey = await generateVaultKey();
+    const wrappedVaultKey = await wrapVaultKey(vaultKey, keyPair.publicKey);
+
+    const unwrappedVaultKey = await unwrapVaultKey(wrappedVaultKey, finalPrivKey);
+    expect(unwrappedVaultKey.type).toBe('secret');
+
+    // Verify incorrect recovery key decryption fails
+    const wrongRecKey = encodeBase32(generateRandomRecoveryBytes());
+    const wrongRecAesKey = await deriveKeyFromRecoveryKey(wrongRecKey, recoverySalt);
+    await expect(decryptPrivateKey(recoveryEnvelope, wrongRecAesKey)).rejects.toThrow();
+  });
+});

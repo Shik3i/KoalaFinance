@@ -2,14 +2,21 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,11 +40,23 @@ type User struct {
 }
 
 type AuthHandler struct {
-	DB *db.DB
+	DB              *db.DB
+	challengeSecret string
+	dummyPubKey     *rsa.PublicKey
+	dummyPrivKey    *rsa.PrivateKey
 }
 
 func NewAuthHandler(db *db.DB) *AuthHandler {
-	return &AuthHandler{DB: db}
+	dummyKey, err := rsa.GenerateKey(rand.Reader, 3072)
+	if err != nil {
+		log.Fatalf("Failed to generate dummy RSA key: %v", err)
+	}
+	return &AuthHandler{
+		DB:              db,
+		challengeSecret: GenerateRandomHex(32),
+		dummyPubKey:     &dummyKey.PublicKey,
+		dummyPrivKey:    dummyKey,
+	}
 }
 
 // GenerateRandomHex generates a secure random hex string
@@ -635,4 +654,239 @@ func (h *AuthHandler) GetUserPublicKey(w http.ResponseWriter, r *http.Request) {
 		"username":   targetUsername,
 		"public_key": pubKey,
 	})
+}
+
+// ParseJWKPublicKey parses a public key from base64url-encoded JWK format
+func ParseJWKPublicKey(jwkJSON []byte) (*rsa.PublicKey, error) {
+	var jwk struct {
+		Kty string `json:"kty"`
+		N   string `json:"n"`
+		E   string `json:"e"`
+	}
+	if err := json.Unmarshal(jwkJSON, &jwk); err != nil {
+		return nil, err
+	}
+	if jwk.Kty != "RSA" {
+		return nil, fmt.Errorf("unsupported key type: %s", jwk.Kty)
+	}
+	nBytes, err := base64.RawURLEncoding.DecodeString(jwk.N)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode modulus: %w", err)
+	}
+	eBytes, err := base64.RawURLEncoding.DecodeString(jwk.E)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode exponent: %w", err)
+	}
+	nVal := new(big.Int).SetBytes(nBytes)
+	var eVal int
+	for _, b := range eBytes {
+		eVal = (eVal << 8) | int(b)
+	}
+	return &rsa.PublicKey{
+		N: nVal,
+		E: eVal,
+	}, nil
+}
+
+// RecoveryChallenge handles POST /api/auth/recovery-challenge with zero timing/status user enumeration leakage
+func (h *AuthHandler) RecoveryChallenge(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+
+	var id, encryptedPrivateKeyRecovery, recoveryKDFParams, publicKeyStr string
+	var status string
+	err := h.DB.SQL.QueryRow(`
+		SELECT id, encrypted_private_key_recovery, recovery_kdf_params_json, public_key, status
+		FROM users WHERE username = ?
+	`, req.Username).Scan(&id, &encryptedPrivateKeyRecovery, &recoveryKDFParams, &publicKeyStr, &status)
+
+	userExists := err == nil && status != "disabled" && encryptedPrivateKeyRecovery != "" && recoveryKDFParams != "" && publicKeyStr != ""
+
+	var activePubKey *rsa.PublicKey
+	var envPayload, kdfPayload string
+
+	if userExists {
+		pubKeyJSON, err := base64.StdEncoding.DecodeString(publicKeyStr)
+		if err != nil {
+			http.Error(w, `{"error":"Failed to parse user public key"}`, http.StatusInternalServerError)
+			return
+		}
+		pubKey, err := ParseJWKPublicKey(pubKeyJSON)
+		if err != nil {
+			http.Error(w, `{"error":"Failed to decode user public key"}`, http.StatusInternalServerError)
+			return
+		}
+		activePubKey = pubKey
+		envPayload = encryptedPrivateKeyRecovery
+		kdfPayload = recoveryKDFParams
+	} else {
+		activePubKey = h.dummyPubKey
+
+		fakeSalt := GenerateRandomHex(16)
+		fakeSaltB64 := base64.StdEncoding.EncodeToString([]byte(fakeSalt))
+
+		fakeKdf := map[string]interface{}{
+			"iterations": 600000,
+			"salt":       fakeSaltB64,
+		}
+		fakeKdfJSON, _ := json.Marshal(fakeKdf)
+		kdfPayload = string(fakeKdfJSON)
+
+		fakeEnv := map[string]interface{}{
+			"cryptoVersion": 1,
+			"algorithm":     "AES-GCM-256",
+			"kdf":           "PBKDF2-HMAC-SHA256",
+			"kdfParams": map[string]interface{}{
+				"iterations": 600000,
+				"salt":       fakeSaltB64,
+			},
+			"nonce":   base64.StdEncoding.EncodeToString([]byte(GenerateRandomHex(6))),
+			"payload": base64.StdEncoding.EncodeToString([]byte(GenerateRandomHex(128))),
+		}
+		fakeEnvJSON, _ := json.Marshal(fakeEnv)
+		envPayload = string(fakeEnvJSON)
+	}
+
+	challengePlaintext := GenerateRandomHex(16)
+
+	encryptedBytes, err := rsa.EncryptOAEP(
+		sha256.New(),
+		rand.Reader,
+		activePubKey,
+		[]byte(challengePlaintext),
+		nil,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to encrypt challenge"}`, http.StatusInternalServerError)
+		return
+	}
+	challengeCiphertextB64 := base64.StdEncoding.EncodeToString(encryptedBytes)
+
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	payloadToSign := req.Username + ":" + challengePlaintext + ":" + timestamp
+	mac := hmac.New(sha256.New, []byte(h.challengeSecret))
+	mac.Write([]byte(payloadToSign))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	tempToken := req.Username + ":" + timestamp + "." + signature
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"challenge":                      challengeCiphertextB64,
+		"temp_token":                      tempToken,
+		"encrypted_private_key_recovery": envPayload,
+		"recovery_kdf_params_json":       kdfPayload,
+	})
+}
+
+// RecoveryReset handles POST /api/auth/recovery-reset
+func (h *AuthHandler) RecoveryReset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username            string `json:"username"`
+		TempToken           string `json:"temp_token"`
+		DecryptedChallenge  string `json:"decrypted_challenge"`
+		NewPassword         string `json:"new_password"`
+		EncryptedPrivateKey string `json:"encrypted_private_key"`
+		KDFParamsJSON       string `json:"kdf_params_json"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	req.DecryptedChallenge = strings.TrimSpace(req.DecryptedChallenge)
+
+	if req.Username == "" || req.TempToken == "" || req.DecryptedChallenge == "" || len(req.NewPassword) < 8 {
+		http.Error(w, `{"error":"Invalid reset parameters. Password must be at least 8 characters."}`, http.StatusBadRequest)
+		return
+	}
+
+	lastDot := strings.LastIndex(req.TempToken, ".")
+	if lastDot == -1 {
+		http.Error(w, `{"error":"Invalid reset token format"}`, http.StatusBadRequest)
+		return
+	}
+	payloadStr := req.TempToken[:lastDot]
+	signatureHex := req.TempToken[lastDot+1:]
+
+	lastColon := strings.LastIndex(payloadStr, ":")
+	if lastColon == -1 {
+		http.Error(w, `{"error":"Invalid reset token payload"}`, http.StatusBadRequest)
+		return
+	}
+	tokenUsername := payloadStr[:lastColon]
+	timestampStr := payloadStr[lastColon+1:]
+
+	if tokenUsername != req.Username {
+		http.Error(w, `{"error":"Token username mismatch"}`, http.StatusBadRequest)
+		return
+	}
+
+	timestampInt, err := strconv.ParseInt(timestampStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"error":"Invalid token timestamp"}`, http.StatusBadRequest)
+		return
+	}
+	tokenTime := time.Unix(timestampInt, 0)
+	if time.Since(tokenTime) > 10*time.Minute {
+		http.Error(w, `{"error":"Reset token has expired"}`, http.StatusBadRequest)
+		return
+	}
+
+	expectedPayload := req.Username + ":" + req.DecryptedChallenge + ":" + timestampStr
+	mac := hmac.New(sha256.New, []byte(h.challengeSecret))
+	mac.Write([]byte(expectedPayload))
+	expectedSignature := hex.EncodeToString(mac.Sum(nil))
+
+	if subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(signatureHex)) != 1 {
+		http.Error(w, `{"error":"Invalid username or recovery key"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var id string
+	err = h.DB.SQL.QueryRow("SELECT id FROM users WHERE username = ? AND status != 'disabled'", req.Username).Scan(&id)
+	if err != nil {
+		http.Error(w, `{"error":"Invalid username or recovery key"}`, http.StatusUnauthorized)
+		return
+	}
+
+	hashedPass, err := HashPassword(req.NewPassword, DefaultArgon2Params)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to hash password"}`, http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = h.DB.SQL.Exec(`
+		UPDATE users
+		SET password_hash = ?,
+		    encrypted_private_key = ?,
+		    kdf_params_json = ?,
+		    status = 'active',
+		    updated_at = ?
+		WHERE id = ?
+	`, hashedPass, req.EncryptedPrivateKey, req.KDFParamsJSON, now, id)
+	if err != nil {
+		http.Error(w, `{"error":"Database error during password reset"}`, http.StatusInternalServerError)
+		return
+	}
+
+	_, _ = h.DB.SQL.Exec("DELETE FROM sessions WHERE user_id = ?", id)
+
+	_ = audit.LogSecurityEvent(h.DB, audit.EventPasswordReset, audit.AuditDetails{
+		UserID: &id,
+		Method: "recovery_key",
+		Status: "success",
+	}, r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Password reset successfully. Please log in again."})
 }

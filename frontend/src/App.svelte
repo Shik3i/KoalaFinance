@@ -63,6 +63,28 @@
   let loginSuccessMessage = '';
   let loginErrorMessage = '';
 
+  // Recovery Password Reset Form
+  let showRecoveryView = false;
+  let recoveryUsername = '';
+  let recoveryKeyInput = '';
+  let recoveryPassword = '';
+  let recoveryPasswordConfirm = '';
+  let recoveryConfirmed = false;
+  let recoveryErrorMessage = '';
+  let recoverySuccessMessage = '';
+  let recoveryIsSubmitting = false;
+
+  function resetRecoveryState() {
+    recoveryUsername = '';
+    recoveryKeyInput = '';
+    recoveryPassword = '';
+    recoveryPasswordConfirm = '';
+    recoveryConfirmed = false;
+    recoveryErrorMessage = '';
+    recoverySuccessMessage = '';
+    recoveryIsSubmitting = false;
+  }
+
   // Current session (kept in-memory)
   type User = {
     id: string;
@@ -434,6 +456,117 @@
     }
   }
 
+  // Recovery Password Reset Flow
+  async function handleRecoveryReset() {
+    recoveryErrorMessage = '';
+    recoverySuccessMessage = '';
+
+    if (!recoveryUsername || !recoveryKeyInput || !recoveryPassword || !recoveryPasswordConfirm) {
+      recoveryErrorMessage = 'All fields are required.';
+      return;
+    }
+
+    if (recoveryPassword.length < 8) {
+      recoveryErrorMessage = 'New password must be at least 8 characters.';
+      return;
+    }
+
+    if (recoveryPassword !== recoveryPasswordConfirm) {
+      recoveryErrorMessage = 'New passwords do not match.';
+      return;
+    }
+
+    if (!recoveryConfirmed) {
+      recoveryErrorMessage = 'You must explicitly confirm you understand the warning.';
+      return;
+    }
+
+    recoveryIsSubmitting = true;
+
+    // Normalise recovery key format (uppercase, strip non-base32)
+    const normalizedKey = recoveryKeyInput.toUpperCase().replace(/[\s-]/g, '');
+
+    try {
+      // 1. Request recovery challenge metadata
+      const challengeRes = await fetch('/api/auth/recovery-challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: recoveryUsername.trim() })
+      });
+
+      const challengeData = await challengeRes.json();
+      if (!challengeRes.ok) {
+        throw new Error(challengeData.error || 'Failed to request recovery challenge.');
+      }
+
+      const { challenge, temp_token, encrypted_private_key_recovery, recovery_kdf_params_json } = challengeData;
+
+      // 2. Decode KDF parameters and derive recovery Aes Key
+      const kdfParams = JSON.parse(recovery_kdf_params_json);
+      const recoverySalt = new Uint8Array(base64ToArrayBuffer(kdfParams.salt));
+      const recoveryAesKey = await deriveKeyFromRecoveryKey(normalizedKey, recoverySalt);
+
+      // 3. Decrypt RSA Private Key envelope using recovery Aes Key
+      const recoveryEnvelope = JSON.parse(encrypted_private_key_recovery);
+      let privateKey: CryptoKey;
+      try {
+        privateKey = await decryptPrivateKey(recoveryEnvelope, recoveryAesKey);
+      } catch (e) {
+        throw new Error('Invalid username or recovery key');
+      }
+
+      // 4. Decrypt RSA-OAEP encrypted challenge
+      const ciphertextBytes = base64ToArrayBuffer(challenge);
+      let decryptedChallenge: string;
+      try {
+        const decryptedChallengeBytes = await crypto.subtle.decrypt(
+          { name: 'RSA-OAEP' },
+          privateKey,
+          ciphertextBytes
+        );
+        decryptedChallenge = new TextDecoder().decode(decryptedChallengeBytes);
+      } catch (e) {
+        throw new Error('Challenge verification failed. Recovery key may be incorrect.');
+      }
+
+      // 5. Derive new password wrapping key
+      const newPasswordSalt = crypto.getRandomValues(new Uint8Array(16));
+      const newPasswordAesKey = await deriveKeyFromPassword(recoveryPassword, newPasswordSalt);
+
+      // 6. Re-wrap private key for the new password
+      const newEncPrivateEnvelope = await encryptPrivateKey(privateKey, newPasswordAesKey, newPasswordSalt);
+
+      // 7. Submit reset payload
+      const resetRes = await fetch('/api/auth/recovery-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: recoveryUsername.trim(),
+          temp_token: temp_token,
+          decrypted_challenge: decryptedChallenge,
+          new_password: recoveryPassword,
+          encrypted_private_key: JSON.stringify(newEncPrivateEnvelope),
+          kdf_params_json: JSON.stringify({ salt: arrayBufferToBase64(newPasswordSalt.buffer) })
+        })
+      });
+
+      const resetData = await resetRes.json();
+      if (!resetRes.ok) {
+        throw new Error(resetData.error || 'Failed to reset password.');
+      }
+
+      // 8. Success: wipe values and return to login
+      resetRecoveryState();
+      showRecoveryView = false;
+      isLoginView = true;
+      loginSuccessMessage = 'Password reset successfully. Please log in with your new password.';
+    } catch (err: any) {
+      recoveryErrorMessage = err.message || 'An unexpected error occurred during password reset.';
+    } finally {
+      recoveryIsSubmitting = false;
+    }
+  }
+
   // 6. Vault Operations
   async function handleCreateVault() {
     vaultCreationMessage = '';
@@ -704,6 +837,98 @@
             onConfirm={handleConfirmRegister}
             onCancel={handleCancelRegister}
           />
+        {:else if showRecoveryView}
+          <!-- Recovery key password reset form -->
+          <form on:submit|preventDefault={handleRecoveryReset} class="auth-form">
+            <div class="input-group">
+              <label for="rec-username">Username or Email</label>
+              <input
+                id="rec-username"
+                type="text"
+                placeholder="Enter your username"
+                bind:value={recoveryUsername}
+                required
+                disabled={recoveryIsSubmitting}
+              />
+            </div>
+
+            <div class="input-group">
+              <label for="rec-key">Recovery Key (52 characters)</label>
+              <input
+                id="rec-key"
+                type="text"
+                placeholder="AAAA-BBBB-CCCC-..."
+                bind:value={recoveryKeyInput}
+                required
+                disabled={recoveryIsSubmitting}
+              />
+            </div>
+
+            <div class="input-group">
+              <label for="rec-password">New Password (minimum 8 characters)</label>
+              <input
+                id="rec-password"
+                type="password"
+                placeholder="Create a strong new password"
+                bind:value={recoveryPassword}
+                required
+                disabled={recoveryIsSubmitting}
+              />
+            </div>
+
+            <div class="input-group">
+              <label for="rec-password-confirm">Confirm New Password</label>
+              <input
+                id="rec-password-confirm"
+                type="password"
+                placeholder="Confirm your new password"
+                bind:value={recoveryPasswordConfirm}
+                required
+                disabled={recoveryIsSubmitting}
+              />
+            </div>
+
+            <div class="warning-box">
+              ⚠️ WARNING: Without your recovery key, encrypted vault data cannot be decrypted if you forget your password. The server never stores your recovery key or decrypted keys.
+            </div>
+
+            <div class="checkbox-group">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  bind:checked={recoveryConfirmed}
+                  required
+                  disabled={recoveryIsSubmitting}
+                />
+                <span>I understand that resetting my password will log me out of all active sessions and require me to log in again with my new password.</span>
+              </label>
+            </div>
+
+            {#if recoveryErrorMessage}
+              <div class="error-banner">{recoveryErrorMessage}</div>
+            {/if}
+            {#if recoverySuccessMessage}
+              <div class="success-banner">{recoverySuccessMessage}</div>
+            {/if}
+
+            <div class="recovery-actions">
+              <button
+                type="submit"
+                class="auth-btn submit-btn"
+                disabled={recoveryIsSubmitting || !recoveryConfirmed}
+              >
+                {#if recoveryIsSubmitting}Resetting Password...{:else}Reset Password & Rewrap Key{/if}
+              </button>
+              <button
+                type="button"
+                class="auth-btn cancel-btn"
+                on:click={() => { showRecoveryView = false; resetRecoveryState(); }}
+                disabled={recoveryIsSubmitting}
+              >
+                Back to Login
+              </button>
+            </div>
+          </form>
         {:else}
           <!-- Tabs for Login / Register -->
           <div class="tab-switcher">
@@ -744,6 +969,16 @@
                   bind:value={loginPassword}
                   required
                 />
+              </div>
+
+              <div class="forgot-password-link">
+                <button
+                  type="button"
+                  class="text-link-btn"
+                  on:click={() => { showRecoveryView = true; loginErrorMessage = ''; loginSuccessMessage = ''; }}
+                >
+                  Forgot password? Use recovery key
+                </button>
               </div>
 
               {#if loginErrorMessage}
@@ -1261,6 +1496,55 @@
   .cancel-btn:hover {
     background-color: #334155;
     color: #f1f5f9;
+  }
+
+  .forgot-password-link {
+    text-align: right;
+    margin-top: -0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .text-link-btn {
+    background: none;
+    border: none;
+    color: #38bdf8;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+    text-decoration: underline;
+    transition: color 0.2s ease;
+  }
+
+  .text-link-btn:hover {
+    color: #7dd3fc;
+  }
+
+  .checkbox-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-bottom: 0.5rem;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .checkbox-label input {
+    margin-top: 0.15rem;
+    cursor: pointer;
+  }
+
+  .recovery-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
   }
 
   .setup-actions {

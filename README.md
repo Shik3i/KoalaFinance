@@ -8,7 +8,7 @@ KoalaFinance is a self-hosted, privacy-first, client-side end-to-end encrypted p
 
 ---
 
-## 1. Implemented Features (Phase 6F)
+## 1. Implemented Features (Phase 6G)
 
 Currently, the core security, database, cryptographic foundations, and early finance models are fully implemented:
 
@@ -61,15 +61,19 @@ Currently, the core security, database, cryptographic foundations, and early fin
   - Encrypted Backup Import: validates versioned backups (max 10MB), checks vault ID alignment, displays file summaries, and restores them client-side in the active vault context while skipping duplicate record IDs.
   - Plaintext JSON Export: extracts fully decrypted, unencrypted database payloads with scary warnings and checkbox confirmation locks.
   - Plaintext CSV Transactions Export: compiles transactions and splits into RFC 4180 escaped CSV files with warnings and confirmation constraints.
+* **Password Recovery & Private Key Rewrapping**:
+  - Stateless challenge-response mechanism securing reset without exposing recovery keys, private keys, or passwords to the server.
+  - timing-padded, zero username-enumeration challenge API response preventing user lookup leakages.
+  - Client-side extraction of RSA private key using Base32 recovery key, challenge decryption, and rewrapping of the RSA private key under a new password-derived wrapping key.
+  - Automated revocation of all active login sessions upon successful password reset.
+  - Zero database structural changes; existing vault keys and records remain unchanged.
 
 ---
 
-## 2. What Is NOT Implemented Yet (Phase 6G+)
+## 2. What Is NOT Implemented Yet (Phase 6H+)
 
 The following features are out of scope for the current foundation and will be implemented in future releases:
 
-- **Backup / Export / Import utilities**
-- **Password Reset UX**
 - **Docker Packaging**
 - **Production Hardening** beyond the foundational boundaries
 

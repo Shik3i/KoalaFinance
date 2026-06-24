@@ -2,6 +2,18 @@
 
 All notable changes to KoalaFinance will be documented in this file.
 
+## [0.7.0] - 2026-06-24
+
+### Added
+- **Password Recovery & Private Key Rewrapping (Phase 6G)**:
+  - Add Forgot Password UX wizard prompting for Username, 52-character Recovery Key, and New Password with explicit warning checks and confirmation checkboxes.
+  - Implement client-side key recovery deriving wrapping key from Recovery Key, decrypting the RSA private key, decrypting the server's RSA-OAEP challenge, and rewrapping the private key under a new password-derived key.
+  - Implement `/api/auth/recovery-challenge` endpoint returning encrypted challenges using the user's public key (manually parsed from JWK format) or a dummy public key for unknown users to prevent username enumeration.
+  - Implement `/api/auth/recovery-reset` endpoint validating stateless signed HMAC challenge tokens, enforcing 10-minute expiry, hashing the new password, updating key envelopes, and revoking all active sessions.
+  - Add rate-limiting to new endpoints (1 request per 5 seconds, burst of 3).
+  - Add security audit logging of password reset events.
+  - Add comprehensive Vitest and Go tests verifying normalization, challenge decryption, session revocation, wrong answer rejection, and zero-enumeration checks.
+
 ## [0.6.0] - 2026-06-24
 
 ### Added

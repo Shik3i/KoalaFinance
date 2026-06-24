@@ -85,6 +85,14 @@ func main() {
 		r.Post("/api/auth/login", authHandler.Login)
 	})
 
+	// Recovery group with rate limiting
+	recoveryLimiter := middleware.NewRateLimiter(0.2, 3.0) // 1 request per 5 seconds, burst of 3
+	app.Router.Group(func(r chi.Router) {
+		r.Use(recoveryLimiter.Limit)
+		r.Post("/api/auth/recovery-challenge", authHandler.RecoveryChallenge)
+		r.Post("/api/auth/recovery-reset", authHandler.RecoveryReset)
+	})
+
 	app.Router.Post("/api/auth/logout", authHandler.Logout)
 	app.Router.Get("/api/auth/me", authHandler.Me)
 	app.Router.Post("/api/auth/recovery/rewrap-private-key", authHandler.CompleteResetOrRewrap)

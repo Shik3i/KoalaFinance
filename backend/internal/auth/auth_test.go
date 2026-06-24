@@ -2,7 +2,12 @@ package auth
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -432,5 +437,185 @@ func TestBootstrapCryptoSetup(t *testing.T) {
 	}
 	if status != "active" {
 		t.Errorf("Expected status to be 'active', got '%s'", status)
+	}
+}
+
+func TestRecoveryFlow(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.SQL.Close()
+
+	handler := NewAuthHandler(database)
+	
+	userId := "user-recovery-id"
+	username := "recovery@test.com"
+	passwordHash, _ := HashPassword("oldPassword123", DefaultArgon2Params)
+	
+	jwkJSON := fmt.Sprintf(`{"kty":"RSA","n":"%s","e":"AQAB"}`, base64.RawURLEncoding.EncodeToString(handler.dummyPubKey.N.Bytes()))
+	pubKeyB64 := base64.StdEncoding.EncodeToString([]byte(jwkJSON))
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := database.SQL.Exec(`
+		INSERT INTO users (id, username, password_hash, role, status, public_key, encrypted_private_key, encrypted_private_key_recovery, kdf_params_json, recovery_kdf_params_json, created_at, updated_at)
+		VALUES (?, ?, ?, 'user', 'active', ?, 'old_enc_priv_key', 'enc_priv_key_recovery_data', 'old_kdf_params', 'recovery_kdf_params', ?, ?)
+	`, userId, username, passwordHash, pubKeyB64, now, now)
+	if err != nil {
+		t.Fatalf("Failed to insert test user: %v", err)
+	}
+
+	sessionId := "session-to-revoke"
+	tokenHash := HashSessionToken("sessiontoken123")
+	_, err = database.SQL.Exec(`
+		INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, csrf_secret)
+		VALUES (?, ?, ?, ?, ?, 'csrf')
+	`, sessionId, userId, tokenHash, now, now)
+	if err != nil {
+		t.Fatalf("Failed to insert test session: %v", err)
+	}
+
+	// 1. Request challenge for existing user
+	reqBody := `{"username":"recovery@test.com"}`
+	req := httptest.NewRequest("POST", "/api/auth/recovery-challenge", strings.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	handler.RecoveryChallenge(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for challenge, got %d. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	var challengeResp struct {
+		Challenge                   string `json:"challenge"`
+		TempToken                   string `json:"temp_token"`
+		EncryptedPrivateKeyRecovery string `json:"encrypted_private_key_recovery"`
+		RecoveryKDFParamsJSON       string `json:"recovery_kdf_params_json"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &challengeResp); err != nil {
+		t.Fatalf("Failed to parse challenge response: %v", err)
+	}
+
+	if challengeResp.Challenge == "" || challengeResp.TempToken == "" {
+		t.Fatal("Expected non-empty challenge and token")
+	}
+	if challengeResp.EncryptedPrivateKeyRecovery != "enc_priv_key_recovery_data" {
+		t.Errorf("Expected real recovery data, got '%s'", challengeResp.EncryptedPrivateKeyRecovery)
+	}
+
+	lastDot := strings.LastIndex(challengeResp.TempToken, ".")
+	if lastDot == -1 {
+		t.Fatalf("Invalid token format: %s", challengeResp.TempToken)
+	}
+	payloadStr := challengeResp.TempToken[:lastDot]
+	
+	lastColon := strings.LastIndex(payloadStr, ":")
+	if lastColon == -1 {
+		t.Fatalf("Invalid token payload format: %s", payloadStr)
+	}
+	tokenUser := payloadStr[:lastColon]
+	if tokenUser != username {
+		t.Errorf("Expected token user to be '%s', got '%s'", username, tokenUser)
+	}
+
+	// 2. Request challenge for unknown user (Verify anti-enumeration response timing/structure)
+	reqBodyUnknown := `{"username":"unknown@test.com"}`
+	reqUnknown := httptest.NewRequest("POST", "/api/auth/recovery-challenge", strings.NewReader(reqBodyUnknown))
+	recUnknown := httptest.NewRecorder()
+	handler.RecoveryChallenge(recUnknown, reqUnknown)
+
+	if recUnknown.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for unknown user challenge, got %d", recUnknown.Code)
+	}
+
+	var challengeRespUnknown struct {
+		Challenge                   string `json:"challenge"`
+		TempToken                   string `json:"temp_token"`
+		EncryptedPrivateKeyRecovery string `json:"encrypted_private_key_recovery"`
+		RecoveryKDFParamsJSON       string `json:"recovery_kdf_params_json"`
+	}
+	if err := json.Unmarshal(recUnknown.Body.Bytes(), &challengeRespUnknown); err != nil {
+		t.Fatalf("Failed to parse unknown challenge response: %v", err)
+	}
+
+	if challengeRespUnknown.Challenge == "" || challengeRespUnknown.TempToken == "" {
+		t.Fatal("Expected fake challenge response fields to be populated")
+	}
+	if challengeRespUnknown.EncryptedPrivateKeyRecovery == "" || challengeRespUnknown.RecoveryKDFParamsJSON == "" {
+		t.Fatal("Expected fake recovery envelopes to be populated")
+	}
+
+	// 3. Decrypt the challenge ciphertext (simulating client)
+	ciphertext, err := base64.StdEncoding.DecodeString(challengeResp.Challenge)
+	if err != nil {
+		t.Fatalf("Failed to decode challenge base64: %v", err)
+	}
+	decryptedBytes, err := rsa.DecryptOAEP(
+		sha256.New(),
+		rand.Reader,
+		handler.dummyPrivKey,
+		ciphertext,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Failed to decrypt challenge: %v", err)
+	}
+	decryptedChallenge := string(decryptedBytes)
+
+	// 4. Verify successful password reset and re-wrap
+	resetBody := map[string]string{
+		"username":              username,
+		"temp_token":            challengeResp.TempToken,
+		"decrypted_challenge":   decryptedChallenge,
+		"new_password":          "newPassword12345",
+		"encrypted_private_key": "new_enc_priv_key_payload",
+		"kdf_params_json":       "new_kdf_params_json_payload",
+	}
+	resetJSON, _ := json.Marshal(resetBody)
+
+	reqReset := httptest.NewRequest("POST", "/api/auth/recovery-reset", bytes.NewReader(resetJSON))
+	recReset := httptest.NewRecorder()
+	handler.RecoveryReset(recReset, reqReset)
+
+	if recReset.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for reset, got %d. Body: %s", recReset.Code, recReset.Body.String())
+	}
+
+	// 5. Verify database changes: new password hash, envelopes, and status 'active'
+	var dbPassHash, dbEncPriv, dbKdf, dbStatus string
+	err = database.SQL.QueryRow("SELECT password_hash, encrypted_private_key, kdf_params_json, status FROM users WHERE id = ?", userId).Scan(&dbPassHash, &dbEncPriv, &dbKdf, &dbStatus)
+	if err != nil {
+		t.Fatalf("Database query failed: %v", err)
+	}
+
+	if dbEncPriv != "new_enc_priv_key_payload" || dbKdf != "new_kdf_params_json_payload" || dbStatus != "active" {
+		t.Errorf("Database update was incorrect: privKey=%s, kdf=%s, status=%s", dbEncPriv, dbKdf, dbStatus)
+	}
+
+	ok, _ := VerifyPassword("newPassword12345", dbPassHash)
+	if !ok {
+		t.Error("Expected password hash to match new password")
+	}
+
+	// 6. Verify all sessions for this user were revoked
+	var sessionCount int
+	_ = database.SQL.QueryRow("SELECT COUNT(*) FROM sessions WHERE user_id = ?", userId).Scan(&sessionCount)
+	if sessionCount != 0 {
+		t.Errorf("Expected all sessions to be deleted, got %d", sessionCount)
+	}
+
+	// 7. Verify submission with incorrect challenge answer fails
+	resetBodyWrongChallenge := map[string]string{
+		"username":              username,
+		"temp_token":            challengeResp.TempToken,
+		"decrypted_challenge":   "wrong-challenge-answer",
+		"new_password":          "newPassword12345",
+		"encrypted_private_key": "new_enc_priv_key_payload",
+		"kdf_params_json":       "new_kdf_params_json_payload",
+	}
+	resetJSONWrong, _ := json.Marshal(resetBodyWrongChallenge)
+
+	reqResetWrong := httptest.NewRequest("POST", "/api/auth/recovery-reset", bytes.NewReader(resetJSONWrong))
+	recResetWrong := httptest.NewRecorder()
+	handler.RecoveryReset(recResetWrong, reqResetWrong)
+
+	if recResetWrong.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 Unauthorized for wrong challenge answer, got %d", recResetWrong.Code)
 	}
 }
