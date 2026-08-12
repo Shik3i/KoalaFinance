@@ -11,11 +11,6 @@ updates:
           - "*"
 
   # Maintain Go dependencies
-  - package-ecosystem: "gitsubmodule" # If submodules are used later
-    directory: "/"
-    schedule:
-      interval: "weekly"
-
   - package-ecosystem: "gomod"
     directory: "/backend"
     schedule:
